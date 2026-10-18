@@ -1367,13 +1367,12 @@ void Application::SetAecMode(AecMode mode) {
 void Application::PlaySound(const std::string_view& sound) { audio_service_.PlaySound(sound); }
 
 void Application::PlayTimerSound() {
-    // 2026-10-18 深夜定稿:本机到时提示音停用,只保留 DONE 闪屏。
-    // 13 小时攻坚(含 2 声短版/1s 延迟/decoder 预检/codec 常驻/
-    // 渲染静默等全部实验)结论:死点恒定在首包出声瞬间,与播放
-    // 时长/时序/渲染/MQTT/decoder/codec 重建全部无关 —— 指向
-    // C3 GDMA(I2S TX 首启 与 显示 SPI/RX DMA)硬件层并发问题,
-    // 软件层无法收敛。开机激活音稳定是因 RX/I2S 全未启动。
-    // 后续方向: 查 ESP32-C3 勘误表 GDMA 条目 / 换 PSRAM 版硬件。
+    // 2026-10-18 深夜终版:本机到时提示音放弃,只保留闪屏。
+    // 全部实验矩阵(2声/1s间隔/popup 60ms/codec常驻/decoder预检/
+    // 渲染静默/1s延迟...)结论:idle 状态下播放要么无声要么死机,
+    // codec 常驻还会破坏对话音频栈。这台 C3 上 idle 播放不可行。
+    // 唯一未试路径:官方 StartNotification(需 HTTP 流,hermes 可
+    // 托管音频文件)——它是否在 C3 idle 下出声也未验证,留待下次。
     timer_sound_restore_pending_ = false;
 }
 
