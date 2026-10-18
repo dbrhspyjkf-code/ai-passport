@@ -1367,33 +1367,14 @@ void Application::SetAecMode(AecMode mode) {
 void Application::PlaySound(const std::string_view& sound) { audio_service_.PlaySound(sound); }
 
 void Application::PlayTimerSound() {
-    // 最终方案(2026-10-18 定稿):唤醒词照常跑,独立任务推包进官方队列。
-    // 关键前提:APP 懒创建(HomeScreen 只建骨架,APP 首次进入才 Create)
-    // 省出 ~23KB —— 内存 25KB 时解码静默失败(无声),48KB 即正常。
-    // 教训:不要为播提示音动 VP/WW/codec —— 停唤醒词会让 duplex RX
-    // 无人读而 I2S 停摆(写阻塞卡死);VP(true) 初始化与 LVGL 抢内存。
-    if (GetDeviceState() != kDeviceStateIdle || timer_sound_restore_pending_) {
-        return;
-    }
-    timer_sound_restore_pending_ = true;
-
-    auto* self = this;
-    if (xTaskCreate(
-            [](void* arg) {
-                auto* app = static_cast<Application*>(arg);
-                auto* codec = Board::GetInstance().GetAudioCodec();
-                // 提示音电平低:临时满音量播放,播完恢复
-                int saved_vol = codec ? codec->output_volume() : 70;
-                if (codec != nullptr) codec->SetOutputVolume(100);
-                app->audio_service_.PlaySound(Lang::Sounds::OGG_SUCCESS5);
-                vTaskDelay(pdMS_TO_TICKS(3500));
-                if (codec != nullptr) codec->SetOutputVolume(saved_vol);
-                app->timer_sound_restore_pending_ = false;
-                vTaskDelete(nullptr);
-            },
-            "timer_sound", 8192, self, 3, nullptr) != pdPASS) {
-        timer_sound_restore_pending_ = false;
-    }
+    // 2026-10-18 深夜定稿:本机到时提示音停用,只保留 DONE 闪屏。
+    // 13 小时攻坚(含 2 声短版/1s 延迟/decoder 预检/codec 常驻/
+    // 渲染静默等全部实验)结论:死点恒定在首包出声瞬间,与播放
+    // 时长/时序/渲染/MQTT/decoder/codec 重建全部无关 —— 指向
+    // C3 GDMA(I2S TX 首启 与 显示 SPI/RX DMA)硬件层并发问题,
+    // 软件层无法收敛。开机激活音稳定是因 RX/I2S 全未启动。
+    // 后续方向: 查 ESP32-C3 勘误表 GDMA 条目 / 换 PSRAM 版硬件。
+    timer_sound_restore_pending_ = false;
 }
 
 void Application::ResetProtocol() {
