@@ -10,6 +10,17 @@
 #include "audio_codec.h"
 #include "board.h"
 #include "dynamic_glyph_cache.h"
+#include "home/finance_app.h"
+#include "home/tetris_app.h"
+#include "home/answer_app.h"
+#include "home/sonos_app.h"
+#include "home/pod_app.h"
+#include "home/timer_app.h"
+#include "home/agenda_service.h"
+#include "home/glm_service.h"
+#include "home/poller.h"
+#include "home/home_screen.h"
+#include "home/weather_service.h"
 #include "jpg/image_to_jpeg.h"
 #include "lvgl_display.h"
 #include "lvgl_theme.h"
@@ -213,25 +224,35 @@ void LvglDisplay::UpdateStatusBar(bool update_all) {
         }
     }
 
-    // Update time — show HH:MM when idle; refresh immediately on state
-    // transitions (update_all=true) and on every minute change thereafter.
+    // Update time — idle 时显示像素名片主页并刷新时钟;
+    // 其他状态(听/说/激活/配网)隐藏主页,小智原生界面照常。
     if (app.GetDeviceState() == kDeviceStateIdle) {
         time_t now = time(NULL);
         struct tm* tm_now = localtime(&now);
-        if (tm_now->tm_year >= 2025 - 1900) {
-            int cur_min = tm_now->tm_hour * 60 + tm_now->tm_min;
-            if (update_all || cur_min != last_displayed_clock_min_) {
-                last_displayed_clock_min_ = cur_min;
-                char time_str[16];
-                strftime(time_str, sizeof(time_str), "%H:%M", tm_now);
-                SetStatus(time_str);
+        {
+            DisplayLockGuard lock(this);
+            if (home_screen_ == nullptr) {
+                home_screen_ = &HomeScreen::Get();
+                home_screen_->Create(lv_screen_active(),
+                                     static_cast<LvglTheme*>(current_theme_)->text_font()->font());
+                // 其余 6 个 APP 懒创建(首次进入时),减少常驻 LVGL 内存
+                // 主页就绪后启动统一轮询(天气/GLM 用量/行程提醒/金融三 tab)
+                PollerConfig(WEATHER_API_URL, 10, GLM_API_KEY, 5, HOME_AGENDA_BASE_URL, 5, HOME_MAIL_BASE_URL, 2);
+                Poller::Get().Start();
             }
-        } else {
-            ESP_LOGW(TAG, "System time not set (tm_year=%d)", tm_now->tm_year);
+            home_screen_->Show();
+            home_screen_->RefreshClock();
+        }
+        if (tm_now != nullptr && tm_now->tm_year >= 2025 - 1900) {
+            last_displayed_clock_min_ = tm_now->tm_hour * 60 + tm_now->tm_min;
         }
     } else {
         // Reset so the clock re-appears immediately when idle resumes.
         last_displayed_clock_min_ = -1;
+        if (home_screen_ != nullptr) {
+            DisplayLockGuard lock(this);
+            home_screen_->Hide();
+        }
     }
 
     esp_pm_lock_acquire(pm_lock_);
@@ -262,6 +283,9 @@ void LvglDisplay::UpdateStatusBar(bool update_all) {
         if (battery_label_ != nullptr && battery_icon_ != icon) {
             battery_icon_ = icon;
             lv_label_set_text(battery_label_, battery_icon_);
+        }
+        if (home_screen_ != nullptr) {
+            home_screen_->RefreshBattery(battery_level, charging);
         }
 
         // Check low battery popup only when clock tick event is triggered

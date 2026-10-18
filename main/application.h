@@ -117,6 +117,8 @@ public:
     void SetAecMode(AecMode mode);
     AecMode GetAecMode() const { return aec_mode_; }
     void PlaySound(const std::string_view& sound);
+    // 在 Application 主任务中安排一次本机计时提示音；不依赖 Home Assistant。
+    void PlayTimerSound();
     AudioService& GetAudioService() { return audio_service_; }
     
     /**
@@ -143,6 +145,8 @@ private:
     NotifyPlayer notify_player_;
     uint32_t notification_playback_id_ = 0;
     std::unique_ptr<Ota> ota_;
+
+    bool timer_sound_restore_pending_ = false;
 
     std::function<void(const std::string&)> mcp_broadcast_callback_;
 

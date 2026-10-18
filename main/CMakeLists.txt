@@ -30,6 +30,25 @@ set(SOURCES "audio/audio_codec.cc"
             "display/lvgl_display/gif/gifdec.c"
             "display/lvgl_display/jpg/image_to_jpeg.cpp"
             "display/lvgl_display/jpg/jpeg_to_image.c"
+            "display/home/home_screen.cc"
+            "display/home/lunar_calendar.cc"
+            "display/home/weather_service.cc"
+            "display/home/glm_service.cc"
+            "display/home/agenda_service.cc"
+            "display/home/poller.cc"
+            "display/home/mail_status.cc"
+            "display/home/mail_app.cc"
+            "display/home/finance_app.cc"
+            "display/home/tetris_app.cc"
+            "display/home/answer_app.cc"
+            "display/home/sonos_app.cc"
+            "display/home/pod_app.cc"
+            "display/home/timer_app.cc"
+            "display/home/font_pixel_clock.c"
+            "display/home/font_home_small_16.c"
+            "display/home/font_home_cn_16.c"
+            "display/home/img_home_avatar.c"
+            "display/home/img_home_avatar_blink.c"
             "protocols/protocol.cc"
             "protocols/text_glyph_payload.cc"
             "protocols/mqtt_protocol.cc"
@@ -70,7 +89,7 @@ function(find_component_by_pattern PATTERN COMPONENT_VAR PATH_VAR)
 endfunction()
 
 # Set default BUILTIN_TEXT_FONT and BUILTIN_ICON_FONT
-set(BUILTIN_TEXT_FONT font_noto_sans_basic_14_1)
+set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)
 set(BUILTIN_ICON_FONT font_material_symbols_14_1)
 
 set(EMOTE_RESOLUTION "320_240")
@@ -328,6 +347,7 @@ idf_component_register(SRCS ${SOURCES}
                         efuse
                         bt
                         fatfs
+                        esp_http_client
                         xiaozhi-fonts
                         ${MAIN_PRIV_REQUIRES_EXTRA}
                     )

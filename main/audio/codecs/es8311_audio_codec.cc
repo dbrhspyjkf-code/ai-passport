@@ -203,14 +203,19 @@ void Es8311AudioCodec::EnableOutput(bool enable) {
 }
 
 int Es8311AudioCodec::Read(int16_t* dest, int samples) {
-    if (input_enabled_) {
+    // 与 EnableInput/EnableOutput/UpdateDeviceState 共用锁，保证 dev_ 不会在
+    // 一次 I2S 读取期间被 close/delete。
+    std::lock_guard<std::mutex> lock(data_if_mutex_);
+    if (input_enabled_ && dev_ != nullptr) {
         ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_read(dev_, (void*)dest, samples * sizeof(int16_t)));
     }
     return samples;
 }
 
 int Es8311AudioCodec::Write(const int16_t* data, int samples) {
-    if (output_enabled_) {
+    // AudioOutputTask 是唯一输出者；该锁把一次 DMA 写与 codec 生命周期串行化。
+    std::lock_guard<std::mutex> lock(data_if_mutex_);
+    if (output_enabled_ && dev_ != nullptr) {
         ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_write(dev_, (void*)data, samples * sizeof(int16_t)));
     }
     return samples;

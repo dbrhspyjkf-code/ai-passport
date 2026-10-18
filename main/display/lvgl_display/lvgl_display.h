@@ -15,6 +15,7 @@
 
 class DynamicGlyphCache;
 class LvglFont;
+class HomeScreen;
 
 class LvglDisplay : public Display {
 public:
@@ -48,6 +49,7 @@ protected:
     const char* battery_icon_ = nullptr;
     const char* network_icon_ = nullptr;
     bool muted_ = false;
+    HomeScreen* home_screen_ = nullptr;   // 惰性创建的像素名片主页(仅 idle 显示)
 
     std::chrono::system_clock::time_point last_status_update_time_;
     esp_timer_handle_t notification_timer_ = nullptr;

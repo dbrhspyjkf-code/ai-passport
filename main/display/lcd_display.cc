@@ -577,6 +577,15 @@ void LcdDisplay::SetupUI() {
     lv_label_set_text(status_label_, Lang::Strings::INITIALIZING);
     lv_obj_align(status_label_, LV_ALIGN_CENTER, 0, 0);
 
+    /* Emoji fixed row(表情固定行:滚动内容永不进入) */
+    emoji_box_ = lv_obj_create(container_);
+    lv_obj_set_size(emoji_box_, LV_HOR_RES, 52);
+    lv_obj_set_style_radius(emoji_box_, 0, 0);
+    lv_obj_set_style_border_width(emoji_box_, 0, 0);
+    lv_obj_set_style_bg_opa(emoji_box_, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_pad_all(emoji_box_, 0, 0);
+    lv_obj_set_scrollbar_mode(emoji_box_, LV_SCROLLBAR_MODE_OFF);
+
     /* Content - Chat area */
     content_ = lv_obj_create(container_);
     lv_obj_set_style_radius(content_, 0, 0);
@@ -611,12 +620,11 @@ void LcdDisplay::SetupUI() {
     lv_obj_center(low_battery_label_);
     lv_obj_add_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN);
 
-    emoji_image_ = lv_img_create(screen);
-    lv_obj_align(emoji_image_, LV_ALIGN_TOP_MID, 0,
-                 text_font->line_height + lvgl_theme->spacing(8));
+    emoji_image_ = lv_img_create(emoji_box_);
+    lv_obj_center(emoji_image_);
 
     // Display AI logo while booting
-    emoji_label_ = lv_label_create(screen);
+    emoji_label_ = lv_label_create(emoji_box_);
     lv_obj_center(emoji_label_);
     lv_obj_set_style_text_font(emoji_label_, large_icon_font, 0);
     lv_obj_set_style_text_color(emoji_label_, lvgl_theme->text_color(), 0);
@@ -700,6 +708,17 @@ void LcdDisplay::SetChatMessage(const char* role, const char* content) {
     }
 
     auto lvgl_theme = static_cast<LvglTheme*>(current_theme_);
+
+    // 用户发言 = 新一轮开始:清空旧消息,界面只保留本轮问+答
+    if (strcmp(role, "user") == 0) {
+        uint32_t n = lv_obj_get_child_cnt(content_);
+        while (n > 0) {
+            lv_obj_t* child = lv_obj_get_child(content_, 0);
+            if (child == nullptr || !lv_obj_is_valid(child)) break;
+            lv_obj_del(child);
+            n = lv_obj_get_child_cnt(content_);
+        }
+    }
 
     // Create a message bubble
     lv_obj_t* msg_bubble = lv_obj_create(content_);
@@ -807,7 +826,7 @@ void LcdDisplay::SetChatMessage(const char* role, const char* content) {
         lv_obj_align(msg_bubble, LV_ALIGN_RIGHT_MID, -25, 0);
 
         // Auto-scroll to this container
-        lv_obj_scroll_to_view_recursive(container, LV_ANIM_ON);
+        lv_obj_scroll_to_view_recursive(container, LV_ANIM_OFF);
     } else if (strcmp(role, "system") == 0) {
         // Create full-width container for system messages to ensure center alignment
         lv_obj_t* container = lv_obj_create(content_);
@@ -820,14 +839,14 @@ void LcdDisplay::SetChatMessage(const char* role, const char* content) {
 
         lv_obj_set_parent(msg_bubble, container);
         lv_obj_align(msg_bubble, LV_ALIGN_CENTER, 0, 0);
-        lv_obj_scroll_to_view_recursive(container, LV_ANIM_ON);
+        lv_obj_scroll_to_view_recursive(container, LV_ANIM_OFF);
     } else {
         // For assistant messages
         // Left align assistant messages
         lv_obj_align(msg_bubble, LV_ALIGN_LEFT_MID, 0, 0);
 
         // Auto-scroll to the message bubble
-        lv_obj_scroll_to_view_recursive(msg_bubble, LV_ANIM_ON);
+        lv_obj_scroll_to_view_recursive(msg_bubble, LV_ANIM_OFF);
     }
 
     // Store reference to the latest message label
