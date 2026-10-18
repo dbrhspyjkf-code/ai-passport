@@ -3,6 +3,8 @@
 #include "timer_app.h"
 
 #include "timer_beep.h"
+#include "application.h"
+#include "assets/lang_config.h"
 
 #include <cstdio>
 
@@ -88,6 +90,14 @@ void TimerApp::Tick() {
     }
     if (st_ != St::RUNNING) return;
     remain_--;
+    // 剩 3 秒:播极短静音预热音频栈(重置 power timer 15s 窗口,
+    // 到时时 output 仍开、管线热 —— 冷态播放会无声/死机)
+    if (remain_ == 3) {
+        Application::GetInstance().Schedule([]() {
+            Application::GetInstance().GetAudioService().PlaySound(
+                Lang::Sounds::OGG_SILENCE0);
+        });
+    }
     if (remain_ <= 0) {
         remain_ = 0;
         st_ = St::DONE;

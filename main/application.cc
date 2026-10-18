@@ -1367,13 +1367,25 @@ void Application::SetAecMode(AecMode mode) {
 void Application::PlaySound(const std::string_view& sound) { audio_service_.PlaySound(sound); }
 
 void Application::PlayTimerSound() {
-    // 2026-10-18 深夜终版:本机到时提示音放弃,只保留闪屏。
-    // 全部实验矩阵(2声/1s间隔/popup 60ms/codec常驻/decoder预检/
-    // 渲染静默/1s延迟...)结论:idle 状态下播放要么无声要么死机,
-    // codec 常驻还会破坏对话音频栈。这台 C3 上 idle 播放不可行。
-    // 唯一未试路径:官方 StartNotification(需 HTTP 流,hermes 可
-    // 托管音频文件)——它是否在 C3 idle 下出声也未验证,留待下次。
-    timer_sound_restore_pending_ = false;
+    // 预热法(2026-10-18 深夜):冷态 idle 播放无声/死机,热态(播放后
+    // 15s 内)100% 稳定(对话结束音从不死 = 铁证)。TimerApp 在剩 3 秒
+    // 时已播过静音预热(重置 power timer),此刻音频栈是热的 —— 直接播。
+    if (GetDeviceState() != kDeviceStateIdle || timer_sound_restore_pending_) {
+        return;
+    }
+    timer_sound_restore_pending_ = true;
+    auto* self = this;
+    if (xTaskCreate(
+            [](void* arg) {
+                auto* app = static_cast<Application*>(arg);
+                app->audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);
+                vTaskDelay(pdMS_TO_TICKS(1200));
+                app->timer_sound_restore_pending_ = false;
+                vTaskDelete(nullptr);
+            },
+            "timer_sound", 8192, self, 3, nullptr) != pdPASS) {
+        timer_sound_restore_pending_ = false;
+    }
 }
 
 void Application::ResetProtocol() {
