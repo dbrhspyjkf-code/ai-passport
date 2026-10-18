@@ -34,8 +34,8 @@ private:
 
     struct Msg {
         char from[72];
-        char subject[84];
-        char preview[304];
+        char subject[64];
+        char preview[164];
     };
     Msg msgs_[10];
     int msg_count_ = 0;

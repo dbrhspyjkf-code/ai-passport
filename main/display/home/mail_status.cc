@@ -42,7 +42,7 @@ bool MailStatus::TakeNewMail(char* from, size_t from_cap, char* subject, size_t 
 void MailStatus::Poll() {
     ESP_LOGI(TAG, "mail poll (url=%s)", base_url_.empty() ? "(空)" : base_url_.c_str());
     if (base_url_.empty()) return;
-    static char body[6144];   // 10 封×~500B 预览,原 1024 装不下导致 close 卡死
+    static char body[3072];   // 3 封×~800B;preview 已截短(内存碎片化约束)
     int len = 0;
     esp_http_client_config_t cfg = {};
     cfg.url = base_url_.c_str();

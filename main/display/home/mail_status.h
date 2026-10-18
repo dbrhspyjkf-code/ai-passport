@@ -38,7 +38,7 @@ private:
     char new_from_[64] = {};
     char new_subject_[128] = {};
 
-    struct Msg { char from[72]; char subject[84]; char preview[304]; };
+    struct Msg { char from[72]; char subject[64]; char preview[164]; };
     Msg msgs_[10];
     int msg_count_ = 0;
     std::string base_url_;
