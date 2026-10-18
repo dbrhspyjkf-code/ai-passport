@@ -1,5 +1,7 @@
 #include "notify_player.h"
 
+#include "esp_heap_caps.h"
+
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -172,6 +174,20 @@ void NotifyPlayer::WorkerEntry(void* arg) {
 }
 
 void NotifyPlayer::WorkerTask() {
+    // 内存预检:碎片化下 demuxer/HTTP 分配会 bad_alloc(官方无保护,
+    // FreeRTOS 任务抛异常 = abort 整机,实测)。块不足直接优雅失败。
+    {
+        int largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+        int total = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+        ESP_LOGI(TAG, "notify mem check: total=%d largest=%d", total, largest);
+        if (largest < 12288) {
+            ESP_LOGE(TAG, "notify aborted: largest block %d < 12KB", largest);
+            std::lock_guard<std::mutex> lock(mutex_);
+            http_finished_ = true;
+            cancelled_ = true;
+            return;   // HandleNotificationFinished 会收尾回 idle
+        }
+    }
     std::string audio_url;
     uint32_t playback_id = 0;
     {

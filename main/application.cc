@@ -3,6 +3,7 @@
 #include "assets/lang_config.h"
 #include "audio_codec.h"
 #include "board.h"
+#include "display/home/home_screen.h"
 #include "display.h"
 #include "mcp_server.h"
 #include "mqtt_protocol.h"
@@ -1115,7 +1116,14 @@ void Application::StartNotification(std::string audio_url, std::vector<NotifySub
     board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
     audio_service_.EnableVoiceProcessing(false);
     audio_service_.EnableWakeWordDetection(audio_service_.IsAfeWakeWord());
-    audio_service_.ReleaseWakeWordResources();
+    {
+        int t0 = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+        ESP_LOGI(TAG, "[notify] before release: total=%d", t0);
+        audio_service_.ReleaseWakeWordResources();
+        int t1 = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+        int l1 = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+        ESP_LOGI(TAG, "[notify] after release: total=%d(+%d) largest=%d", t1, t1 - t0, l1);
+    }
     while (audio_service_.PopPacketFromSendQueue()) {
         // Discard microphone audio left over from a previous conversation.
     }
@@ -1367,25 +1375,16 @@ void Application::SetAecMode(AecMode mode) {
 void Application::PlaySound(const std::string_view& sound) { audio_service_.PlaySound(sound); }
 
 void Application::PlayTimerSound() {
-    // 预热法(2026-10-18 深夜):冷态 idle 播放无声/死机,热态(播放后
-    // 15s 内)100% 稳定(对话结束音从不死 = 铁证)。TimerApp 在剩 3 秒
-    // 时已播过静音预热(重置 power timer),此刻音频栈是热的 —— 直接播。
+    // 与预热音完全相同的路径:main 上直接播(0.3s 小文件推包毫秒级,
+    // 无反压;独立任务方案因 8KB 栈 > largest 7.7KB 创建失败无声)。
     if (GetDeviceState() != kDeviceStateIdle || timer_sound_restore_pending_) {
         return;
     }
     timer_sound_restore_pending_ = true;
-    auto* self = this;
-    if (xTaskCreate(
-            [](void* arg) {
-                auto* app = static_cast<Application*>(arg);
-                app->audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);
-                vTaskDelay(pdMS_TO_TICKS(1200));
-                app->timer_sound_restore_pending_ = false;
-                vTaskDelete(nullptr);
-            },
-            "timer_sound", 8192, self, 3, nullptr) != pdPASS) {
-        timer_sound_restore_pending_ = false;
-    }
+    Schedule([this]() {
+        audio_service_.PlaySound(Lang::Sounds::OGG_CHIME_FULL);
+        Schedule([this]() { timer_sound_restore_pending_ = false; });
+    });
 }
 
 void Application::ResetProtocol() {
