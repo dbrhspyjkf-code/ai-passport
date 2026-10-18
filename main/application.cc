@@ -1375,16 +1375,9 @@ void Application::SetAecMode(AecMode mode) {
 void Application::PlaySound(const std::string_view& sound) { audio_service_.PlaySound(sound); }
 
 void Application::PlayTimerSound() {
-    // 与预热音完全相同的路径:main 上直接播(0.3s 小文件推包毫秒级,
-    // 无反压;独立任务方案因 8KB 栈 > largest 7.7KB 创建失败无声)。
-    if (GetDeviceState() != kDeviceStateIdle || timer_sound_restore_pending_) {
-        return;
-    }
-    timer_sound_restore_pending_ = true;
-    Schedule([this]() {
-        audio_service_.PlaySound(Lang::Sounds::OGG_CHIME_FULL);
-        Schedule([this]() { timer_sound_restore_pending_ = false; });
-    });
+    // 提醒由 TimerApp::Tick 驱动(2026-10-19):DONE 后每秒一声嘀×3,
+    // 再闪屏×3 —— 单声 main 直播路径(已验证),Tick 提供节拍。
+    timer_sound_restore_pending_ = false;
 }
 
 void Application::ResetProtocol() {

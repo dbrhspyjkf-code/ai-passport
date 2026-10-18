@@ -78,13 +78,19 @@ void TimerApp::TickCb(lv_timer_t* t) {
 
 void TimerApp::Tick() {
     if (st_ == St::DONE && root_ != nullptr) {
-        // 到时闪烁(前 5 秒静止,之后背景黄/暗交替)
+        // 提醒节奏:第 1-3 秒每秒嘀一声(main 直播,已验证路径),
+        // 第 4-9 秒闪屏 3 次(亮暗交替),之后停在暗底。
         done_ticks_++;
-        if (done_ticks_ > 5) {
-            static bool blink = false;
-            blink = !blink;
+        if (done_ticks_ >= 1 && done_ticks_ <= 3) {
+            Application::GetInstance().Schedule([]() {
+                Application::GetInstance().GetAudioService().PlaySound(
+                    Lang::Sounds::OGG_CHIME_FULL);
+            });
+        } else if (done_ticks_ >= 4 && done_ticks_ <= 9) {
+            // tick4亮 5暗 6亮 7暗 8亮 9暗 = 3 次完整闪烁
+            bool lit = ((done_ticks_ - 4) % 2) == 0;
             lv_obj_set_style_bg_color(root_,
-                blink ? lv_color_hex(0x3A2E10) : lv_color_hex(0x101418), 0);
+                lit ? lv_color_hex(0x3A2E10) : lv_color_hex(0x101418), 0);
         }
         return;
     }
