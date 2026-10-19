@@ -88,6 +88,30 @@ static bool ha_post(const char* base_url, const char* token, const char* entity_
     return err == ESP_OK && code >= 200 && code < 300;
 }
 
+static bool ha_update_entity(const char* base_url, const char* token, const char* entity_id) {
+    // 外部控制器切歌时，Sonos 集成可能按约一分钟的节奏扫描。
+    // homeassistant.update_entity 可同步触发本实体更新，随后再读状态。
+    char url[192], body[128], auth[256];
+    snprintf(url, sizeof(url), "%s/api/services/homeassistant/update_entity", base_url);
+    snprintf(body, sizeof(body), "{\"entity_id\":\"%s\"}", entity_id);
+    snprintf(auth, sizeof(auth), "Bearer %s", token);
+
+    esp_http_client_config_t cfg = {};
+    cfg.url = url;
+    cfg.method = HTTP_METHOD_POST;
+    cfg.timeout_ms = 6000;
+    cfg.buffer_size = 512;
+    esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    if (client == nullptr) return false;
+    esp_http_client_set_header(client, "Authorization", auth);
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+    esp_http_client_set_post_field(client, body, strlen(body));
+    esp_err_t err = esp_http_client_perform(client);
+    int code = esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+    return err == ESP_OK && code >= 200 && code < 300;
+}
+
 static bool parse_ha_utc_timestamp(const char* value, time_t* out) {
     int y, mo, d, h, mi, se;
     if (sscanf(value, "%d-%d-%dT%d:%d:%d", &y, &mo, &d, &h, &mi, &se) != 6) return false;
@@ -149,7 +173,7 @@ void PlayerApp::Create(lv_obj_t* parent) {
     cover_img_ = lv_image_create(root_);
     lv_obj_set_size(cover_img_, kCoverSize, kCoverSize);
     // TAB 底部(y=40)与标题顶部之间的视觉居中位置：64px 封面自 y=64 开始。
-    lv_obj_align(cover_img_, LV_ALIGN_TOP_MID, 0, 64);
+    lv_obj_align(cover_img_, LV_ALIGN_TOP_MID, 0, 56);
     lv_obj_add_flag(cover_img_, LV_OBJ_FLAG_HIDDEN);
 
     // 状态/曲名/艺术家
@@ -205,7 +229,7 @@ void PlayerApp::Create(lv_obj_t* parent) {
     lv_obj_set_style_text_font(prog_label_, &font_home_cn_16, 0);
     lv_obj_set_style_text_color(prog_label_, lv_color_hex(0xAAB4BE), 0);
     lv_label_set_text(prog_label_, "");
-    lv_obj_align(prog_label_, LV_ALIGN_CENTER, 0, 80);
+            lv_obj_align(prog_label_, LV_ALIGN_CENTER, 0, 80);
 
     // 底部操作说明
     pos_label_ = lv_label_create(root_);
@@ -232,6 +256,8 @@ void PlayerApp::Run() {
     for (int i = 0; i < kPlayers; i++) {
         st_[i] = PlayerState{};
     }
+    int64_t last_entity_refresh_us = 0;
+    int last_entity_refresh_idx = -1;
     for (;;) {
         int c = cmd_.exchange(0);
         int t = cmd_target_.load();
@@ -244,6 +270,18 @@ void PlayerApp::Run() {
             case 5: ESP_LOGI(TAG, "next %s", ha_post(cfgs[t].base_url, cfgs[t].token, cfgs[t].entity_id, "media_next_track", nullptr) ? "OK" : "FAIL"); break;
             default: break;
         }
+        // 不依赖 Sonos 集成默认的约一分钟扫描：当前设备首次进入/切 TAB
+        // 以及之后每 6 秒请求 HA 立即更新实体。完成后短暂等待再 FetchStatus。
+        int64_t now_us = esp_timer_get_time();
+        if (cur_ != last_entity_refresh_idx ||
+            now_us - last_entity_refresh_us >= 6000000) {
+            bool refreshed = ha_update_entity(cfgs[cur_].base_url, cfgs[cur_].token,
+                                              cfgs[cur_].entity_id);
+            ESP_LOGI(TAG, "entity refresh p%d %s", cur_, refreshed ? "OK" : "FAIL");
+            last_entity_refresh_us = now_us;
+            last_entity_refresh_idx = cur_;
+            vTaskDelay(pdMS_TO_TICKS(250));
+        }
         // 两个播放器都轮询（切 tab 即有数据）；当前 tab 每 3s，另一个 15s。
         FetchStatus(cur_);
         static int slow = 0;
@@ -251,8 +289,18 @@ void PlayerApp::Run() {
             slow = 0;
             FetchStatus(1 - cur_);
         }
-        // Sonos 换歌后，下载服务器已转换好的 I4 封面；失败降级为无封面。
-        if (cover_requested_.exchange(false)) FetchCover();
+        // 外部设备切歌时，HA 的 title 往往先于 entity_picture 到达。
+        // 在 2/4/6 秒各重试一次，收到新封面后覆盖旧缓冲。
+        if (cover_requested_.exchange(false)) {
+            FetchCover(cur_);
+            if (cover_retries_left_ > 0) {
+                cover_retry_due_us_ = esp_timer_get_time() + 2000000;
+            }
+        } else if (cover_retries_left_ > 0 && esp_timer_get_time() >= cover_retry_due_us_) {
+            --cover_retries_left_;
+            FetchCover(cur_);
+            cover_retry_due_us_ = esp_timer_get_time() + 2000000;
+        }
         // Leave/Destroy 可能在 HTTP 期间发生；退出后不再触碰 UI。
         if (!running_.load()) break;
         if (lvgl_port_lock(pdMS_TO_TICKS(1000))) {
@@ -296,6 +344,9 @@ bool PlayerApp::FetchStatus(int idx) {
         cJSON* artist = cJSON_GetObjectItem(attrs, "media_artist");
         snprintf(ps.artist, sizeof(ps.artist), "%s",
                  cJSON_IsString(artist) && artist->valuestring ? artist->valuestring : "");
+        cJSON* picture = cJSON_GetObjectItem(attrs, "entity_picture");
+        snprintf(ps.picture_url, sizeof(ps.picture_url), "%s",
+                 cJSON_IsString(picture) && picture->valuestring ? picture->valuestring : "");
         cJSON* dur = cJSON_GetObjectItem(attrs, "media_duration");
         
         double dur_s = cJSON_IsNumber(dur) ? dur->valuedouble : 0;
@@ -313,15 +364,14 @@ bool PlayerApp::FetchStatus(int idx) {
         // 单调时钟锚(免疫设备/HA 时钟偏差):切歌重置,同曲 pos 前进则校准
         {
             bool title_changed = strcmp(ps.title, ps.last_title) != 0;
+            bool picture_changed = strcmp(ps.picture_url, ps.last_picture_url) != 0;
             memmove(ps.last_title, ps.title, strnlen(ps.title, sizeof(ps.last_title) - 1) + 1);
+            memmove(ps.last_picture_url, ps.picture_url,
+                    strnlen(ps.picture_url, sizeof(ps.last_picture_url) - 1) + 1);
             int64_t mono = esp_timer_get_time();
             if (title_changed) {
                 ps.display_pos = ps.ha_pos;         // 新歌:从服务端位置起步
                 ps.anchor_us_ = mono;
-                if (idx == 0) {                     // Sonos 换歌时请求新封面
-                    cover_ready_ = false;
-                    cover_requested_.store(true);
-                }
             } else {
                 // 与"当前实时估算"比较(不是过期的 display_pos——
                 // 那个恒为上次锚定值,MA 恒 0 时每轮都误重置弹回起点)
@@ -335,6 +385,14 @@ bool PlayerApp::FetchStatus(int idx) {
                     ps.anchor_us_ = mono;
                 }
             }
+            // 外部切歌时 title 和 entity_picture 会分两次抵达：
+            // 任一变化都启动重试，picture 后到也会覆盖先前可能拿到的旧封面。
+            if (idx == cur_ && (title_changed || picture_changed)) {
+                cover_ready_ = false;
+                cover_retries_left_ = 3;
+                cover_retry_due_us_ = 0;
+                cover_requested_.store(true);
+            }
         }
         cJSON_Delete(root);
         ps.valid = true;
@@ -343,7 +401,7 @@ bool PlayerApp::FetchStatus(int idx) {
     return true;
 }
 
-bool PlayerApp::FetchCover() {
+bool PlayerApp::FetchCover(int idx) {
     if (!running_.load()) return false;
     // 不使用静态大数组：仅在 Player APP task 内按需申请，失败即降级为无封面。
     if (cover_data_ == nullptr) {
@@ -355,7 +413,8 @@ bool PlayerApp::FetchCover() {
     }
 
     esp_http_client_config_t cfg = {};
-    cfg.url = HOME_AGENDA_BASE_URL "/assets/cover.i8";
+    cfg.url = idx == 0 ? HOME_AGENDA_BASE_URL "/assets/cover.i8?player=sonos"
+                      : HOME_AGENDA_BASE_URL "/assets/cover.i8?player=pod";
     cfg.method = HTTP_METHOD_GET;
     cfg.timeout_ms = 8000;
     cfg.buffer_size = 512;
@@ -389,6 +448,7 @@ bool PlayerApp::FetchCover() {
     cover_dsc_.header.stride = kCoverSize;
     cover_dsc_.data_size = kCoverDataBytes;
     cover_dsc_.data = cover_data_;
+    cover_player_ = idx;
     cover_ready_ = true;
     ESP_LOGI(TAG, "cover ready: %dB", length);
     return true;
@@ -396,6 +456,9 @@ bool PlayerApp::FetchCover() {
 
 void PlayerApp::ResetCover() {
     cover_ready_ = false;
+    cover_player_ = -1;
+    cover_retries_left_ = 0;
+    cover_retry_due_us_ = 0;
     cover_requested_.store(false);
     if (cover_data_ != nullptr) {
         heap_caps_free(cover_data_);
@@ -428,6 +491,12 @@ void PlayerApp::ApplyVolume(int idx, int delta) {
 void PlayerApp::SwitchTab(int idx) {
     if (idx == cur_) return;
     cur_ = idx;
+    // 另一台播放器此前可能只完成了后台状态轮询，尚未取图；切入时立即请求，
+    // 且旧播放器封面绝不短暂显示到新 TAB。
+    cover_ready_ = false;
+    cover_retries_left_ = 3;
+    cover_retry_due_us_ = 0;
+    cover_requested_.store(true);
     UpdateUi();
 }
 
@@ -489,7 +558,7 @@ void PlayerApp::UpdateUi() {
     }
     PlayerState& ps = st_[cur_];
     if (cover_img_ != nullptr) {
-        if (cur_ == 0 && cover_ready_) {
+        if (cover_player_ == cur_ && cover_ready_) {
             lv_image_set_src(cover_img_, &cover_dsc_);
             lv_obj_clear_flag(cover_img_, LV_OBJ_FLAG_HIDDEN);
         } else {

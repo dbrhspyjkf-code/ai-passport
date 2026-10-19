@@ -40,7 +40,7 @@ private:
     bool FetchStatus(int idx);
     void SendCommand(int idx, const char* service);
     void ApplyVolume(int idx, int delta);
-    bool FetchCover();
+    bool FetchCover(int idx);
     void ResetCover();
     void UpdateUi();
     void TickProgress();   // 500ms 进度推进(钟表式)
@@ -50,6 +50,7 @@ private:
     struct PlayerState {
         char title[96];
         char artist[64];
+        char picture_url[192];
         char state[16];
         float volume = 0;
         double ha_pos = 0;          // HA 上报位置(秒)
@@ -60,6 +61,7 @@ private:
         int64_t anchor_us_ = 0;     // 单调时钟锚(免疫 SNTP/时区偏差)
         float dur_min = 0;
         char last_title[96] = {};
+        char last_picture_url[192] = {};
         bool valid = false;
     };
     PlayerState st_[kPlayers];
@@ -76,6 +78,9 @@ private:
     lv_image_dsc_t cover_dsc_ = {};
     uint8_t* cover_data_ = nullptr;    // 仅进入播放器后按需申请 5120B LVGL I8
     std::atomic<bool> cover_requested_{false};
+    int cover_retries_left_ = 0;       // 外部切歌时，等待 HA 的 entity_picture 同步
+    int cover_player_ = -1;            // cover_data_ 所属 tab，防止 Sonos 图显示到 HomePod
+    int64_t cover_retry_due_us_ = 0;
     bool cover_ready_ = false;
     lv_obj_t* title_label_ = nullptr;
     lv_obj_t* artist_label_ = nullptr;
