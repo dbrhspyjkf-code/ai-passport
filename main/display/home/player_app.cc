@@ -162,7 +162,7 @@ void PlayerApp::Create(lv_obj_t* parent) {
 
     // 进度条 + 时间(M5-DIAL 同款钟表式推进,500ms timer 平滑)
     pos_bar_ = lv_bar_create(root_);
-    lv_obj_set_size(pos_bar_, 200, 8);
+    lv_obj_set_size(pos_bar_, 200, 6);
     lv_obj_align(pos_bar_, LV_ALIGN_CENTER, 0, 52);
     lv_bar_set_range(pos_bar_, 0, 100);
     lv_bar_set_value(pos_bar_, 0, LV_ANIM_OFF);
