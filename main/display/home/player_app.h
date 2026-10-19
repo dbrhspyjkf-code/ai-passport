@@ -40,6 +40,7 @@ private:
     void SendCommand(int idx, const char* service);
     void ApplyVolume(int idx, int delta);
     void UpdateUi();
+    void TickProgress();   // 500ms 进度推进(钟表式)
     void SwitchTab(int idx);
 
     // 每个播放器的数据
@@ -52,7 +53,8 @@ private:
         double ha_at_epoch = 0;     // 上报时刻
         double last_good_pos = 0;   // 最近一次新鲜推送的位置
         double last_good_time = 0;
-        double display_pos = 0;     // 显示位置(钟表式推进)
+        double display_pos = 0;     // 显示位置
+        int64_t anchor_us_ = 0;     // 单调时钟锚(免疫 SNTP/时区偏差)
         float dur_min = 0;
         char last_title[96] = {};
         bool valid = false;
@@ -70,7 +72,9 @@ private:
     lv_obj_t* title_label_ = nullptr;
     lv_obj_t* artist_label_ = nullptr;
     lv_obj_t* vol_label_ = nullptr;
+    lv_obj_t* pos_bar_ = nullptr;
     lv_obj_t* pos_label_ = nullptr;
+    lv_obj_t* prog_label_ = nullptr;   // 进度时间
     lv_timer_t* ui_timer_ = nullptr;
     bool active_ = false;
 };

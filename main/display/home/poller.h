@@ -15,6 +15,7 @@ public:
     void Start();
     void Pause();   // 播放器等内存大户使用期间挂起轮询
     void Resume();
+    void Stop();    // 删除任务(真释放栈;Start 重建)
 
     // 请求立即执行一轮(提前唤醒)。
     void RequestRefresh();

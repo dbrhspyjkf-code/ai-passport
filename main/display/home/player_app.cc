@@ -10,6 +10,7 @@
 #include "cJSON.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "esp_lvgl_port.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -46,6 +47,8 @@ static bool ha_get(const char* base_url, const char* token, const char* entity_i
         body[len] = '\0';
         ok = esp_http_client_get_status_code(client) == 200 && len > 0;
     }
+    ESP_LOGI(TAG, "ha_get: ok=%d len=%d code=%d", ok ? 1 : 0, len,
+             ok ? esp_http_client_get_status_code(client) : -1);
     esp_http_client_close(client);
     esp_http_client_cleanup(client);
     return ok;
@@ -157,6 +160,40 @@ void PlayerApp::Create(lv_obj_t* parent) {
     lv_label_set_text(artist_label_, "");
     lv_obj_align(artist_label_, LV_ALIGN_CENTER, 0, 10);
 
+    // 进度条 + 时间(M5-DIAL 同款钟表式推进,500ms timer 平滑)
+    pos_bar_ = lv_bar_create(root_);
+    lv_obj_set_size(pos_bar_, 200, 8);
+    lv_obj_align(pos_bar_, LV_ALIGN_CENTER, 0, 52);
+    lv_bar_set_range(pos_bar_, 0, 100);
+    lv_bar_set_value(pos_bar_, 0, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(pos_bar_, lv_color_hex(0x222A31), 0);
+    lv_obj_set_style_bg_opa(pos_bar_, LV_OPA_COVER, 0);
+    {
+        static lv_style_t ind2;
+        static bool inited2 = false;
+        if (!inited2) {
+            lv_style_init(&ind2);
+            lv_style_set_bg_color(&ind2, lv_color_hex(0xFFC24B));
+            lv_style_set_bg_opa(&ind2, LV_OPA_COVER);
+            lv_style_set_radius(&ind2, 3);
+            inited2 = true;
+        }
+        lv_obj_add_style(pos_bar_, &ind2, LV_PART_INDICATOR);
+    }
+    // (进度时间 label 在 h 里加 prog_label_)
+    // 500ms 平滑推进 timer(M5-DIAL 同款节奏)
+    ui_timer_ = lv_timer_create([](lv_timer_t* t) {
+        static_cast<PlayerApp*>(lv_timer_get_user_data(t))->TickProgress();
+    }, 500, this);
+    lv_timer_pause(ui_timer_);
+
+    // 进度时间 label(此前丢失创建导致 TickProgress 崩溃重启)
+    prog_label_ = lv_label_create(root_);
+    lv_obj_set_style_text_font(prog_label_, &font_home_cn_16, 0);
+    lv_obj_set_style_text_color(prog_label_, lv_color_hex(0xAAB4BE), 0);
+    lv_label_set_text(prog_label_, "");
+    lv_obj_align(prog_label_, LV_ALIGN_CENTER, 0, 68);
+
     // 底部操作说明
     pos_label_ = lv_label_create(root_);
     lv_obj_set_style_text_font(pos_label_, &font_home_cn_16, 0);
@@ -218,6 +255,7 @@ bool PlayerApp::FetchStatus(int idx) {
     };
     static char body[4096];
     if (!ha_get(cfgs[idx].base_url, cfgs[idx].token, cfgs[idx].entity_id, body, sizeof(body))) {
+        ESP_LOGE(TAG, "FetchStatus p%d ha_get FAIL", idx);
         return false;
     }
     cJSON* root = cJSON_Parse(body);
@@ -254,12 +292,26 @@ bool PlayerApp::FetchStatus(int idx) {
                 ps.ha_at_epoch = (double)at;
             }
         }
-        // 新鲜推送(≤90s)记为本地推进基准
-        if (ps.ha_at_epoch > 0) {
-            double e = difftime(time(NULL), (time_t)ps.ha_at_epoch);
-            if (e >= 0 && e <= 90) {
-                ps.last_good_pos = ps.ha_pos;
-                ps.last_good_time = (double)time(NULL);
+        // 单调时钟锚(免疫设备/HA 时钟偏差):切歌重置,同曲 pos 前进则校准
+        {
+            bool title_changed = strcmp(ps.title, ps.last_title) != 0;
+            memmove(ps.last_title, ps.title, strnlen(ps.title, sizeof(ps.last_title) - 1) + 1);
+            int64_t mono = esp_timer_get_time();
+            if (title_changed) {
+                ps.display_pos = ps.ha_pos;         // 新歌:从服务端位置起步
+                ps.anchor_us_ = mono;
+            } else {
+                // 与"当前实时估算"比较(不是过期的 display_pos——
+                // 那个恒为上次锚定值,MA 恒 0 时每轮都误重置弹回起点)
+                double live = ps.display_pos;
+                if (ps.anchor_us_ > 0 && strcmp(ps.state, "playing") == 0) {
+                    live += (double)(mono - ps.anchor_us_) / 1000000.0;
+                }
+                // 服务端位置追上本地估算(±2s)才校准;MA 恒 0 追不上→本地走
+                if (ps.ha_pos >= live - 2.0 && ps.ha_pos <= live + 30.0) {
+                    ps.display_pos = ps.ha_pos;
+                    ps.anchor_us_ = mono;
+                }
             }
         }
         cJSON_Delete(root);
@@ -310,6 +362,31 @@ void PlayerApp::HandleKey(int key) {
     }
 }
 
+void PlayerApp::TickProgress() {
+    if (!active_ || root_ == nullptr) return;
+    PlayerState& ps = st_[cur_];
+    static int dbg = 0;
+    if (++dbg % 20 == 1) {   // 每 10 秒一条
+        ESP_LOGI(TAG, "tick: valid=%d dur=%.1f pos=%.0f at=%.0f lg=%.0f/%.0f st=%s",
+                 ps.valid ? 1 : 0, ps.dur_min, ps.ha_pos, ps.ha_at_epoch,
+                 ps.last_good_pos, ps.last_good_time, ps.state);
+    }
+    if (!ps.valid || ps.dur_min <= 0.01f) return;
+    // 单调时钟推进:cur = 锚定位置 + (mono_now - 锚定时刻)
+    // 免疫 SNTP 未同步/时区/HA 服务器时钟偏差(实测 wall clock 方案
+    // 在设备时钟偏差下 last_good 永不更新,进度条停 0)。
+    double cur = ps.display_pos;
+    if (strcmp(ps.state, "playing") == 0 && ps.anchor_us_ > 0) {
+        cur = ps.display_pos + (double)(esp_timer_get_time() - ps.anchor_us_) / 1000000.0;
+    }
+    double dur_s = ps.dur_min * 60.0;
+    if (dur_s > 1 && cur > dur_s) cur = dur_s;
+    lv_bar_set_value(pos_bar_, (int32_t)(cur * 100 / dur_s), LV_ANIM_OFF);
+    lv_label_set_text_fmt(prog_label_, "%d:%02d / %d:%02d",
+                          (int)(cur / 60), (int)cur % 60,
+                          (int)ps.dur_min, (int)(ps.dur_min * 60) % 60);
+}
+
 void PlayerApp::UpdateUi() {
     if (root_ == nullptr) return;
     // tab 高亮
@@ -349,6 +426,7 @@ void PlayerApp::Enter() {
         lv_obj_clear_flag(root_, LV_OBJ_FLAG_HIDDEN);
         lv_obj_move_foreground(root_);
         active_ = true;
+        if (ui_timer_ != nullptr) lv_timer_resume(ui_timer_);   // 进度推进
         running_.store(true);
         if (xTaskCreate(TaskEntry, "player", 6144, this, 3, nullptr) != pdPASS) {
             ESP_LOGE(TAG, "player task create FAILED (stack)");

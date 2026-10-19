@@ -58,6 +58,12 @@ void Poller::RequestRefresh() {
 }
 
 void Poller::Pause() { paused_.store(true); }
+// Loop 尾部:vTaskDelete 自删(Stop 释放栈的机制)
+void Poller::Stop() {
+    // 真停:running_=false 后 Loop 在下一个检测点(≤1s)退出并自删任务,
+    // 释放 12KB 栈(Pause 只是空转仍占内存,播放器需要这块内存)。
+    running_.exchange(false);
+}
 void Poller::Resume() { paused_.store(false); }
 
 void Poller::Loop() {
@@ -86,7 +92,8 @@ void Poller::Loop() {
     }
 
     for (;;) {
-        if (paused_.load()) {   // 挂起期:不轮询(让内存给播放器等)
+        if (!running_.load()) break;   // Stop:退出并自删(释放栈)
+        if (paused_.load()) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
@@ -152,11 +159,13 @@ void Poller::Loop() {
         bool round_ok = agenda_ok && weather_ok && glm_ok;
         int wait_seconds = round_ok ? 300 : 30;
         for (int i = 0; i < wait_seconds * 2; i++) {
+            if (!running_.load()) break;   // Stop 快速退出
             if (refresh_now_.exchange(false)) break;
             vTaskDelay(pdMS_TO_TICKS(500));
         }
         (void)last_round;
     }
+    vTaskDelete(NULL);   // Stop 后自删(释放 12KB 栈)
 }
 
 void Poller::Start() {
