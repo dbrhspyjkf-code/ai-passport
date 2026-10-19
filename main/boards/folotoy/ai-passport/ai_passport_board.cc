@@ -341,6 +341,14 @@ private:
                     }
                     return;
                 }
+                auto& answerOK = AnswerApp::Get();
+                if (answerOK.Active()) {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        answerOK.HandleKey(2);   // 翻开答案
+                        lvgl_port_unlock();
+                    }
+                    return;
+                }
                 // 主页:对话中/刚结束=切换对话;平静=进选中 APP
                 {
                     static int64_t s_last_chat_us = 0;
@@ -393,6 +401,8 @@ private:
                 if (mailL.Active()) { mailL.Leave(); return; }
                 auto& timerL = TimerApp::Get();
                 if (timerL.Active()) { timerL.Leave(); return; }
+                auto& answerL = AnswerApp::Get();
+                if (answerL.Active()) { answerL.Leave(); return; }
                 if (Application::GetInstance().GetDeviceState() == kDeviceStateIdle) {
                     ToggleChat();
                 }
