@@ -72,8 +72,8 @@ private:
     lv_obj_t* mail_label_ = nullptr;
     lv_timer_t* mail_blink_ = nullptr;       // 未读邮件信封图标(有未读才显示)
     lv_obj_t* app_name_label_ = nullptr;   // 横线下方:选中 APP 名
-    lv_obj_t* launcher_items_[7] = {};
-    static const int kLauncherCount = 7;   // 金融/Email/答案/Sonos/Pod/计时/方块
+    lv_obj_t* launcher_items_[6] = {};
+    static const int kLauncherCount = 6;   // 金融/Email/答案/播放器/计时/方块
     int launcher_sel_ = 0;
     lv_obj_t* battery_text_ = nullptr;    // "70%"(含充电 + 后缀)
     lv_obj_t* battery_frame_ = nullptr;   // 像素电池外框

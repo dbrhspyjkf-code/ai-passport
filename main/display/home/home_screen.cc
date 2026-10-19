@@ -23,8 +23,7 @@
 #include "finance_app.h"
 #include "tetris_app.h"
 #include "answer_app.h"
-#include "sonos_app.h"
-#include "pod_app.h"
+#include "player_app.h"
 #include "timer_app.h"
 
 // ---------------- 个人信息配置 ----------------
@@ -237,14 +236,13 @@ void HomeScreen::Create(lv_obj_t* parent, const lv_font_t* font) {
     lv_obj_align(divider, LV_ALIGN_BOTTOM_MID, 0, -31);   // 文字在横线与屏底间垂直居中
 
     launcher_items_[0] = lv_obj_create(root_);   // 金融
-    launcher_items_[1] = lv_obj_create(root_);   // Email(新)
+    launcher_items_[1] = lv_obj_create(root_);   // Email
     launcher_items_[2] = lv_obj_create(root_);   // 答案之书
-    launcher_items_[3] = lv_obj_create(root_);   // SONOS
-    launcher_items_[4] = lv_obj_create(root_);   // Pod
-    launcher_items_[5] = lv_obj_create(root_);   // 计时器
-    launcher_items_[6] = lv_obj_create(root_);   // 方块(移到末位)
+    launcher_items_[3] = lv_obj_create(root_);   // 播放器(Sonos+HomePod)
+    launcher_items_[4] = lv_obj_create(root_);   // 计时器
+    launcher_items_[5] = lv_obj_create(root_);   // 方块
     for (int i = 0; i < kLauncherCount; i++) {
-        lv_obj_set_size(launcher_items_[i], 28, 28);
+        lv_obj_set_size(launcher_items_[i], 32, 32);
         lv_obj_set_style_bg_color(launcher_items_[i], lv_color_hex(C_BG), 0);
         lv_obj_set_style_border_color(launcher_items_[i], lv_color_hex(C_DIM), 0);
         lv_obj_set_style_border_width(launcher_items_[i], 1, 0);
@@ -252,7 +250,7 @@ void HomeScreen::Create(lv_obj_t* parent, const lv_font_t* font) {
         lv_obj_set_style_pad_all(launcher_items_[i], 0, 0);
         lv_obj_set_scrollbar_mode(launcher_items_[i], LV_SCROLLBAR_MODE_OFF);
         lv_obj_clear_flag(launcher_items_[i], LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_pos(launcher_items_[i], 4 + i * 33, 250);   // 7 格 28px
+        lv_obj_set_pos(launcher_items_[i], 7 + i * 38, 248);   // 6 格 32px
     }
     {   // 金融:K 线蜡烛图(6 根,左下→右上上升,红绿混合)
         auto px = [&](int x, int y, int w, int h, uint32_t color) {
@@ -295,7 +293,7 @@ void HomeScreen::Create(lv_obj_t* parent, const lv_font_t* font) {
     }
     static const int lshape2[4][2] = {{0, 0}, {1, 0}, {1, 1}, {1, 2}};
     for (int i = 0; i < 4; i++) {   // 方块:L 形(缩小适配 28px 框)
-        lv_obj_t* b = lv_obj_create(launcher_items_[6]);
+        lv_obj_t* b = lv_obj_create(launcher_items_[5]);
         lv_obj_set_size(b, 6, 6);
         lv_obj_set_style_bg_color(b, lv_color_hex(0xf5a263), 0);
         lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
@@ -313,23 +311,16 @@ void HomeScreen::Create(lv_obj_t* parent, const lv_font_t* font) {
         lv_obj_center(book);
     }
 
-    {   // Sonos 图标:"S"
+    {   // 播放器图标:♪(Material Symbols 音符)
         lv_obj_t* note = lv_label_create(launcher_items_[3]);
-        lv_obj_set_style_text_font(note, &font_home_cn_16, 0);
+        lv_obj_set_style_text_font(note, &font_material_symbols_20_4, 0);
         lv_obj_set_style_text_color(note, lv_color_hex(C_FG), 0);
-        lv_label_set_text(note, "S");
+        lv_label_set_text(note, MATERIAL_SYMBOLS_MUSIC_NOTE);
         lv_obj_center(note);
     }
 
-    {   // HomePod 图标:"H"
-        lv_obj_t* pod = lv_label_create(launcher_items_[4]);
-        lv_obj_set_style_text_font(pod, &font_home_cn_16, 0);
-        lv_obj_set_style_text_color(pod, lv_color_hex(C_FG), 0);
-        lv_label_set_text(pod, "H");
-        lv_obj_center(pod);
-    }
     {   // 计时器图标:"计"字
-        lv_obj_t* tm = lv_label_create(launcher_items_[5]);
+        lv_obj_t* tm = lv_label_create(launcher_items_[4]);
         lv_obj_set_style_text_font(tm, &font_home_cn_16, 0);
         lv_obj_set_style_text_color(tm, lv_color_hex(C_FG), 0);
         lv_label_set_text(tm, "计");
@@ -348,7 +339,7 @@ void HomeScreen::Create(lv_obj_t* parent, const lv_font_t* font) {
 }
 
 void HomeScreen::LauncherHighlight() {
-    static const char* kNames[7] = {"金融", "邮件", "答案", "Sonos", "HomePod", "计时", "方块"};
+    static const char* kNames[6] = {"金融", "邮件", "答案", "播放", "计时", "方块"};
     for (int i = 0; i < kLauncherCount; i++) {
         if (launcher_items_[i] == nullptr) continue;
         lv_obj_set_style_border_color(launcher_items_[i],
@@ -369,10 +360,9 @@ void HomeScreen::SwitchApp(int idx) {
             case 0: alive = FinanceApp::Get().Active(); break;
             case 1: alive = MailApp::Get().Active(); break;
             case 2: alive = AnswerApp::Get().Active(); break;
-            case 3: alive = SonosApp::Get().Active(); break;
-            case 4: alive = PodApp::Get().Active(); break;
-            case 5: alive = TimerApp::Get().Active(); break;
-            case 6: alive = TetrisApp::Get().Active(); break;
+            case 3: alive = PlayerApp::Get().Active(); break;
+            case 4: alive = TimerApp::Get().Active(); break;
+            case 5: alive = TetrisApp::Get().Active(); break;
             default: break;
         }
         if (alive) return;   // 确实还在运行,跳过
@@ -384,10 +374,9 @@ void HomeScreen::SwitchApp(int idx) {
                 case 0: FinanceApp::Get().Destroy(); break;
                 case 1: MailApp::Get().Destroy(); break;
                 case 2: AnswerApp::Get().Destroy(); break;
-                case 3: SonosApp::Get().Destroy(); break;
-                case 4: PodApp::Get().Destroy(); break;
-                case 5: TimerApp::Get().Destroy(); break;
-                case 6: TetrisApp::Get().Destroy(); break;
+                case 3: PlayerApp::Get().Destroy(); break;
+                case 4: TimerApp::Get().Destroy(); break;
+                case 5: TetrisApp::Get().Destroy(); break;
                 default: break;
             }
             lvgl_port_unlock();
@@ -406,12 +395,9 @@ void HomeScreen::SwitchApp(int idx) {
         AnswerApp::Get().Create(parent);
         AnswerApp::Get().Enter();
     } else if (idx == 3) {
-        SonosApp::Get().Create(parent);
-        SonosApp::Get().Enter();
+        PlayerApp::Get().Create(parent);
+        PlayerApp::Get().Enter();
     } else if (idx == 4) {
-        PodApp::Get().Create(parent);
-        PodApp::Get().Enter();
-    } else if (idx == 5) {
         TimerApp::Get().Create(parent);
         TimerApp::Get().Enter();
     } else {

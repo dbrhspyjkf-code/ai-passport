@@ -41,8 +41,9 @@ set(SOURCES "audio/audio_codec.cc"
             "display/home/finance_app.cc"
             "display/home/tetris_app.cc"
             "display/home/answer_app.cc"
-            "display/home/sonos_app.cc"
-            "display/home/pod_app.cc"
+            "display/home/player_app.cc"
+            # "display/home/sonos_app.cc" (merged into player_app)
+            # "display/home/pod_app.cc" (merged into player_app)
             "display/home/timer_app.cc"
             "display/home/font_pixel_clock.c"
             "display/home/font_home_small_16.c"

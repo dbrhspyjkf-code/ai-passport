@@ -1,0 +1,379 @@
+// player_app —— Sonos + HomePod 统一播放控制器。见 player_app.h。
+// 逻辑融合自 sonos_app/pod_app(已参数化),保留已验证的进度算法。
+
+#include "player_app.h"
+
+#include <cstdio>
+#include <cstring>
+#include <ctime>
+
+#include "cJSON.h"
+#include "esp_http_client.h"
+#include "esp_log.h"
+#include "esp_lvgl_port.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+LV_FONT_DECLARE(font_home_cn_16);
+
+static const char* TAG = "player";
+
+// ---------------- HA HTTP 辅助 ----------------
+
+static bool ha_get(const char* base_url, const char* token, const char* entity_id,
+                   char* body, size_t cap) {
+    static char url[160];
+    snprintf(url, sizeof(url), "%s/api/states/%s", base_url, entity_id);
+    esp_http_client_config_t cfg = {};
+    cfg.url = url;
+    cfg.method = HTTP_METHOD_GET;
+    cfg.timeout_ms = 6000;
+    cfg.buffer_size = 2048;
+    esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    if (client == nullptr) return false;
+    char auth[192];
+    snprintf(auth, sizeof(auth), "Bearer %s", token);
+    esp_http_client_set_header(client, "Authorization", auth);
+    int len = 0;
+    bool ok = false;
+    if (esp_http_client_open(client, 0) == ESP_OK) {
+        esp_http_client_fetch_headers(client);
+        int n;
+        while ((n = esp_http_client_read(client, body + len, (int)cap - len - 1)) > 0) {
+            len += n;
+            if (len >= (int)cap - 1) break;
+        }
+        body[len] = '\0';
+        ok = esp_http_client_get_status_code(client) == 200 && len > 0;
+    }
+    esp_http_client_close(client);
+    esp_http_client_cleanup(client);
+    return ok;
+}
+
+static bool ha_post(const char* base_url, const char* token, const char* entity_id,
+                    const char* service, const char* extra_fields) {
+    // perform 一体化(M5-DIAL 同款):手动 open/fetch 流式 POST 在
+    // IDF6 上状态码拿不到(实测全 FAIL),perform 内部收完响应。
+    static char url[192], body[192], auth[256];
+    snprintf(url, sizeof(url), "%s/api/services/media_player/%s", base_url, service);
+    if (extra_fields && extra_fields[0]) {
+        snprintf(body, sizeof(body), "{\"entity_id\": \"%s\", %s}", entity_id, extra_fields);
+    } else {
+        snprintf(body, sizeof(body), "{\"entity_id\": \"%s\"}", entity_id);
+    }
+    snprintf(auth, sizeof(auth), "Bearer %s", token);
+    esp_http_client_config_t cfg = {};
+    cfg.url = url;
+    cfg.method = HTTP_METHOD_POST;
+    cfg.timeout_ms = 8000;
+    cfg.buffer_size = 1024;
+    esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    if (client == nullptr) return false;
+    esp_http_client_set_header(client, "Authorization", auth);
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+    esp_http_client_set_post_field(client, body, strlen(body));
+    esp_err_t err = esp_http_client_perform(client);
+    int code = esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+    return err == ESP_OK && code >= 200 && code < 300;
+}
+
+static bool parse_ha_utc_timestamp(const char* value, time_t* out) {
+    int y, mo, d, h, mi, se;
+    if (sscanf(value, "%d-%d-%dT%d:%d:%d", &y, &mo, &d, &h, &mi, &se) != 6) return false;
+    y -= mo <= 2;
+    const int64_t era = (y >= 0 ? y : y - 399) / 400;
+    const int64_t yoe = y - era * 400;
+    const int64_t doy = (153 * (mo + (mo > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    const int64_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    int64_t seconds = era * 146097 + doe - 719468;
+    seconds = seconds * 86400 + h * 3600 + mi * 60 + se;
+    const char* tz = value + 19;
+    if (*tz == '+' || *tz == '-') {
+        int th, tm;
+        if (sscanf(tz + 1, "%d:%d", &th, &tm) == 2) {
+            const int off = th * 3600 + tm * 60;
+            seconds += *tz == '+' ? -off : off;
+        }
+    }
+    *out = (time_t)seconds;
+    return true;
+}
+
+// ---------------- App ----------------
+
+PlayerApp& PlayerApp::Get() {
+    static PlayerApp inst;
+    return inst;
+}
+
+void PlayerApp::Create(lv_obj_t* parent) {
+    if (root_ != nullptr) return;
+    root_ = lv_obj_create(parent);
+    lv_obj_set_size(root_, LV_PCT(100), LV_PCT(100));
+    lv_obj_center(root_);
+    lv_obj_set_style_bg_color(root_, lv_color_hex(0x101418), 0);
+    lv_obj_set_style_border_width(root_, 0, 0);
+    lv_obj_set_style_pad_all(root_, 8, 0);
+    lv_obj_set_style_radius(root_, 0, 0);
+    lv_obj_set_scrollbar_mode(root_, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_clear_flag(root_, LV_OBJ_FLAG_SCROLLABLE);
+
+    // tab 栏(顶部两格)
+    for (int i = 0; i < kPlayers; i++) {
+        tab_btn_[i] = lv_btn_create(root_);
+        lv_obj_set_size(tab_btn_[i], 100, 32);
+        lv_obj_set_pos(tab_btn_[i], 10 + i * 108, 8);
+        lv_obj_set_style_radius(tab_btn_[i], 6, 0);
+        lv_obj_set_style_bg_color(tab_btn_[i], lv_color_hex(0x1A2129), 0);
+        lv_obj_set_style_border_width(tab_btn_[i], 2, 0);
+        lv_obj_set_style_border_color(tab_btn_[i], lv_color_hex(0x2A333D), 0);
+        lv_obj_set_style_shadow_width(tab_btn_[i], 0, 0);
+        tab_lbl_[i] = lv_label_create(tab_btn_[i]);
+        lv_obj_set_style_text_font(tab_lbl_[i], &font_home_cn_16, 0);
+        lv_label_set_text(tab_lbl_[i], i == 0 ? "Sonos" : "HomePod");
+        lv_obj_center(tab_lbl_[i]);
+    }
+
+    // 状态/曲名/艺术家
+    // 曲名(大字,横向竖向居中偏上)
+    title_label_ = lv_label_create(root_);
+    lv_obj_set_style_text_font(title_label_, &font_home_cn_16, 0);   // 中英混排
+    lv_obj_set_style_text_color(title_label_, lv_color_hex(0x9FE870), 0);
+    lv_obj_set_style_text_align(title_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(title_label_, LV_HOR_RES - 24);
+    lv_label_set_long_mode(title_label_, LV_LABEL_LONG_DOT);
+    lv_label_set_text(title_label_, "…");
+    lv_obj_align(title_label_, LV_ALIGN_CENTER, 0, -30);
+
+    // 演唱者(居中偏下)
+    artist_label_ = lv_label_create(root_);
+    lv_obj_set_style_text_font(artist_label_, &font_home_cn_16, 0);
+    lv_obj_set_style_text_color(artist_label_, lv_color_hex(0xE8E3D3), 0);
+    lv_obj_set_style_text_align(artist_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(artist_label_, LV_HOR_RES - 24);
+    lv_label_set_long_mode(artist_label_, LV_LABEL_LONG_DOT);
+    lv_label_set_text(artist_label_, "");
+    lv_obj_align(artist_label_, LV_ALIGN_CENTER, 0, 10);
+
+    // 底部操作说明
+    pos_label_ = lv_label_create(root_);
+    lv_obj_set_style_text_font(pos_label_, &font_home_cn_16, 0);
+    lv_obj_set_style_text_color(pos_label_, lv_color_hex(0x8A949E), 0);
+    lv_obj_set_style_text_align(pos_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_text(pos_label_, "上下:音量 长按:切歌\n双击OK:切换设备");
+    lv_obj_align(pos_label_, LV_ALIGN_BOTTOM_MID, 0, -16);
+    lv_label_set_long_mode(pos_label_, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(pos_label_, LV_HOR_RES - 24);
+
+    lv_obj_add_flag(root_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void PlayerApp::TaskEntry(void* arg) {
+    static_cast<PlayerApp*>(arg)->Run();
+}
+
+void PlayerApp::Run() {
+    static const PlayerCfg cfgs[kPlayers] = {
+        {SONOS_HA_BASE_URL, SONOS_HA_TOKEN, SONOS_ENTITY_ID, "Sonos"},
+        {POD_HA_BASE_URL, POD_HA_TOKEN, POD_ENTITY_ID, "HomePod"},
+    };
+    for (int i = 0; i < kPlayers; i++) {
+        st_[i] = PlayerState{};
+    }
+    for (;;) {
+        int c = cmd_.exchange(0);
+        int t = cmd_target_.load();
+        if (c != 0) ESP_LOGI(TAG, "run cmd %d -> player %d", c, t);
+        switch (c) {
+            case 1: ESP_LOGI(TAG, "play_pause %s", ha_post(cfgs[t].base_url, cfgs[t].token, cfgs[t].entity_id, "media_play_pause", nullptr) ? "OK" : "FAIL"); break;
+            case 2: ApplyVolume(t, 5); break;
+            case 3: ApplyVolume(t, -5); break;
+            case 4: ESP_LOGI(TAG, "prev %s", ha_post(cfgs[t].base_url, cfgs[t].token, cfgs[t].entity_id, "media_previous_track", nullptr) ? "OK" : "FAIL"); break;
+            case 5: ESP_LOGI(TAG, "next %s", ha_post(cfgs[t].base_url, cfgs[t].token, cfgs[t].entity_id, "media_next_track", nullptr) ? "OK" : "FAIL"); break;
+            default: break;
+        }
+        // 两个播放器都轮询(切 tab 即有数据);当前 tab 每 3s,另一个 15s
+        FetchStatus(cur_);
+        static int slow = 0;
+        if (++slow >= 5) {
+            slow = 0;
+            FetchStatus(1 - cur_);
+        }
+        if (lvgl_port_lock(pdMS_TO_TICKS(1000))) {
+            UpdateUi();
+            lvgl_port_unlock();
+        }
+        for (int i = 0; i < 30 && running_.load(); i++) vTaskDelay(pdMS_TO_TICKS(100));
+        if (!running_.load()) break;
+    }
+    vTaskDelete(NULL);
+}
+
+bool PlayerApp::FetchStatus(int idx) {
+    static const PlayerCfg cfgs[kPlayers] = {
+        {SONOS_HA_BASE_URL, SONOS_HA_TOKEN, SONOS_ENTITY_ID, "Sonos"},
+        {POD_HA_BASE_URL, POD_HA_TOKEN, POD_ENTITY_ID, "HomePod"},
+    };
+    static char body[4096];
+    if (!ha_get(cfgs[idx].base_url, cfgs[idx].token, cfgs[idx].entity_id, body, sizeof(body))) {
+        return false;
+    }
+    cJSON* root = cJSON_Parse(body);
+    if (root == nullptr) return false;
+    cJSON* attrs = cJSON_GetObjectItem(root, "attributes");
+    if (!cJSON_IsObject(attrs)) {
+        cJSON_Delete(root);
+        return false;
+    }
+    PlayerState& ps = st_[idx];
+    if (lvgl_port_lock(pdMS_TO_TICKS(1000))) {
+        cJSON* state = cJSON_GetObjectItem(root, "state");
+        snprintf(ps.state, sizeof(ps.state), "%s",
+                 cJSON_IsString(state) && state->valuestring ? state->valuestring : "idle");
+        cJSON* vol = cJSON_GetObjectItem(attrs, "volume_level");
+        ps.volume = (cJSON_IsNumber(vol)) ? vol->valuedouble : 0;
+        cJSON* title = cJSON_GetObjectItem(attrs, "media_title");
+        snprintf(ps.title, sizeof(ps.title), "%s",
+                 cJSON_IsString(title) && title->valuestring ? title->valuestring : "");
+        cJSON* artist = cJSON_GetObjectItem(attrs, "media_artist");
+        snprintf(ps.artist, sizeof(ps.artist), "%s",
+                 cJSON_IsString(artist) && artist->valuestring ? artist->valuestring : "");
+        cJSON* dur = cJSON_GetObjectItem(attrs, "media_duration");
+        
+        double dur_s = cJSON_IsNumber(dur) ? dur->valuedouble : 0;
+        ps.dur_min = (float)(dur_s / 60.0);
+        cJSON* pos = cJSON_GetObjectItem(attrs, "media_position");
+        cJSON* pos_at = cJSON_GetObjectItem(attrs, "media_position_updated_at");
+        ps.ha_pos = (pos != nullptr && cJSON_IsNumber(pos)) ? pos->valuedouble : 0;
+        ps.ha_at_epoch = 0;
+        if (cJSON_IsString(pos_at) && pos_at->valuestring) {
+            time_t at = 0;
+            if (parse_ha_utc_timestamp(pos_at->valuestring, &at) && at > 0) {
+                ps.ha_at_epoch = (double)at;
+            }
+        }
+        // 新鲜推送(≤90s)记为本地推进基准
+        if (ps.ha_at_epoch > 0) {
+            double e = difftime(time(NULL), (time_t)ps.ha_at_epoch);
+            if (e >= 0 && e <= 90) {
+                ps.last_good_pos = ps.ha_pos;
+                ps.last_good_time = (double)time(NULL);
+            }
+        }
+        cJSON_Delete(root);
+        ps.valid = true;
+        lvgl_port_unlock();
+    }
+    return true;
+}
+
+void PlayerApp::SendCommand(int idx, const char* service) {
+    cmd_target_.store(idx);
+    (void)service;
+}
+
+void PlayerApp::ApplyVolume(int idx, int delta) {
+    static const PlayerCfg cfgs[kPlayers] = {
+        {SONOS_HA_BASE_URL, SONOS_HA_TOKEN, SONOS_ENTITY_ID, "Sonos"},
+        {POD_HA_BASE_URL, POD_HA_TOKEN, POD_ENTITY_ID, "HomePod"},
+    };
+    ESP_LOGI(TAG, "ApplyVolume p%d %+d (cur %.2f)", idx, delta, st_[idx].volume);
+    // 返回值在下方统一打
+    int v = (int)(st_[idx].volume * 100) + delta;
+    if (v < 0) v = 0;
+    if (v > 100) v = 100;
+    char extra[48];
+    snprintf(extra, sizeof(extra), "\"volume_level\": %.2f", v / 100.0);
+    bool ok = ha_post(cfgs[idx].base_url, cfgs[idx].token, cfgs[idx].entity_id, "volume_set", extra);
+    ESP_LOGI(TAG, "volume_set %s", ok ? "OK" : "FAILED");
+}
+
+void PlayerApp::SwitchTab(int idx) {
+    if (idx == cur_) return;
+    cur_ = idx;
+    UpdateUi();
+}
+
+void PlayerApp::HandleKey(int key) {
+    ESP_LOGI(TAG, "key %d (active=%d)", key, active_ ? 1 : 0);
+    if (!active_) return;
+    switch (key) {
+        case 0: cmd_target_.store(cur_); cmd_.store(2); break;   // 音量+
+        case 1: cmd_target_.store(cur_); cmd_.store(3); break;   // 音量-
+        case 2: cmd_target_.store(cur_); cmd_.store(1); break;   // 播放/暂停
+        case 3: SwitchTab(1 - cur_); break;                      // 双击 OK:切 tab
+        case 4: cmd_target_.store(cur_); cmd_.store(4); break;   // 上一曲
+        case 5: cmd_target_.store(cur_); cmd_.store(5); break;   // 下一曲
+        default: break;
+    }
+}
+
+void PlayerApp::UpdateUi() {
+    if (root_ == nullptr) return;
+    // tab 高亮
+    static const PlayerCfg cfgs[kPlayers] = {
+        {SONOS_HA_BASE_URL, SONOS_HA_TOKEN, SONOS_ENTITY_ID, "Sonos"},
+        {POD_HA_BASE_URL, POD_HA_TOKEN, POD_ENTITY_ID, "HomePod"},
+    };
+    for (int i = 0; i < kPlayers; i++) {
+        bool on = (i == cur_);
+        lv_obj_set_style_border_color(tab_btn_[i],
+            on ? lv_color_hex(0xFFC24B) : lv_color_hex(0x2A333D), 0);
+        lv_obj_set_style_bg_color(tab_btn_[i],
+            on ? lv_color_hex(0x2B3320) : lv_color_hex(0x1A2129), 0);
+        lv_obj_set_style_text_color(tab_lbl_[i],
+            on ? lv_color_hex(0xFFC24B) : lv_color_hex(0x8A949E), 0);
+        lv_label_set_text(tab_lbl_[i], cfgs[i].tab_name);
+    }
+    PlayerState& ps = st_[cur_];
+    if (!ps.valid) {
+        lv_label_set_text(title_label_, "连接中…");
+        lv_label_set_text(artist_label_, "");
+        return;
+    }
+    const char* state_cn = strcmp(ps.state, "playing") == 0 ? "播放中"
+                          : strcmp(ps.state, "paused") == 0 ? "已暂停"
+                          : strcmp(ps.state, "idle") == 0 ? "空闲" : ps.state;
+    char buf[80];
+    snprintf(buf, sizeof(buf), "[%s]", state_cn);
+    lv_label_set_text(title_label_, ps.title[0] ? ps.title : buf);
+    lv_label_set_text(artist_label_, ps.artist);
+
+}
+
+void PlayerApp::Enter() {
+    if (root_ == nullptr) return;
+    if (lvgl_port_lock(pdMS_TO_TICKS(1000))) {
+        lv_obj_clear_flag(root_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(root_);
+        active_ = true;
+        running_.store(true);
+        if (xTaskCreate(TaskEntry, "player", 6144, this, 3, nullptr) != pdPASS) {
+            ESP_LOGE(TAG, "player task create FAILED (stack)");
+            running_.store(false);
+        }
+        lvgl_port_unlock();
+    }
+}
+
+void PlayerApp::Leave() {
+    if (lvgl_port_lock(pdMS_TO_TICKS(1000))) {
+        running_.store(false);
+        active_ = false;
+        lv_obj_add_flag(root_, LV_OBJ_FLAG_HIDDEN);
+        lvgl_port_unlock();
+    }
+}
+
+void PlayerApp::Destroy() {
+    Leave();
+    if (lvgl_port_lock(pdMS_TO_TICKS(1000))) {
+        if (root_ != nullptr) {
+            lv_obj_delete(root_);
+            root_ = nullptr;
+        }
+        lvgl_port_unlock();
+    }
+}

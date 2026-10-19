@@ -57,6 +57,9 @@ void Poller::RequestRefresh() {
     refresh_now_.store(true);
 }
 
+void Poller::Pause() { paused_.store(true); }
+void Poller::Resume() { paused_.store(false); }
+
 void Poller::Loop() {
     auto now_min = []() { return (uint32_t)(esp_timer_get_time() / 1000000ULL / 60); };
     uint32_t last_weather = 0, last_glm = 0, last_round = 0, s_last_mail = 0;
@@ -83,6 +86,10 @@ void Poller::Loop() {
     }
 
     for (;;) {
+        if (paused_.load()) {   // 挂起期:不轮询(让内存给播放器等)
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
         uint32_t now = now_min();
         ESP_LOGI(TAG, "round start (t=%us, refresh=%d)", (unsigned)(esp_timer_get_time() / 1000000ULL),
                  (int)refresh_now_.load());

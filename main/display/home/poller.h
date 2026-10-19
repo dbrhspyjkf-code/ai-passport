@@ -13,6 +13,8 @@ public:
 
     // 创建后台轮询 task(幂等)。须在各项 Service::Start 配置之后调用。
     void Start();
+    void Pause();   // 播放器等内存大户使用期间挂起轮询
+    void Resume();
 
     // 请求立即执行一轮(提前唤醒)。
     void RequestRefresh();
@@ -21,6 +23,7 @@ private:
     Poller() = default;
     void Loop();
 
+    std::atomic<bool> paused_{false};
     std::atomic<bool> running_{false};
     std::atomic<bool> refresh_now_{false};
 };

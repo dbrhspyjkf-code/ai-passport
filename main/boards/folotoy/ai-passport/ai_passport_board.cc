@@ -10,8 +10,7 @@
 #include "display/home/home_screen.h"
 #include "display/home/tetris_app.h"
 #include "display/home/answer_app.h"
-#include "display/home/sonos_app.h"
-#include "display/home/pod_app.h"
+#include "display/home/player_app.h"
 #include "display/home/timer_app.h"
 #include "display/home/mail_app.h"
 #include "esp_lvgl_port.h"
@@ -100,10 +99,6 @@ private:
         for (int i = 0; i < kAdcButtonNum; i++) {
             adc_button_[i] = nullptr;
         }
-
-        // One ADC1 unit shared by all three ladder keys. AdcButton reuses the
-        // handle when adc_config.adc_handle is non-null, so the same physical
-        // pin can decode several keys without "adc1 is already in use".
         adc_oneshot_unit_init_cfg_t init_cfg = {
             .unit_id = ADC_UNIT_1,
         };
@@ -112,30 +107,30 @@ private:
         button_adc_config_t adc_cfg = {};
         adc_cfg.adc_handle = &adc_handle_;
         adc_cfg.unit_id = ADC_UNIT_1;
-        adc_cfg.adc_channel = ADC_CHANNEL_0;  // GPIO0
+        adc_cfg.adc_channel = ADC_CHANNEL_0;
 
-        adc_cfg.button_index = kAdcButtonUp;      // UP:   ~0 mV
+        adc_cfg.button_index = kAdcButtonUp;
         adc_cfg.min = BSP_ADC_BUTTON_UP_MIN;
         adc_cfg.max = BSP_ADC_BUTTON_UP_MAX;
         adc_button_[kAdcButtonUp] = new AdcButton(adc_cfg);
 
-        adc_cfg.button_index = kAdcButtonDown;    // DOWN: ~300 mV
+        adc_cfg.button_index = kAdcButtonDown;
         adc_cfg.min = BSP_ADC_BUTTON_DOWN_MIN;
         adc_cfg.max = BSP_ADC_BUTTON_DOWN_MAX;
         adc_button_[kAdcButtonDown] = new AdcButton(adc_cfg);
 
-        adc_cfg.button_index = kAdcButtonOk;      // OK:   ~595 mV
+        adc_cfg.button_index = kAdcButtonOk;
         adc_cfg.min = BSP_ADC_BUTTON_OK_MIN;
         adc_cfg.max = BSP_ADC_BUTTON_OK_MAX;
         adc_button_[kAdcButtonOk] = new AdcButton(adc_cfg);
 
-        // Button callbacks run on the button task; schedule all UI/audio
-        // work onto the main task so LVGL and codec access stay on one thread.
         auto& finance = FinanceApp::Get();
-
-        // 金融 APP 活跃时,全部按键先经 LVGL 锁路由(HandleKey 约定持锁调用)
-
         auto up = adc_button_[kAdcButtonUp];
+        auto down = adc_button_[kAdcButtonDown];
+        auto ok = adc_button_[kAdcButtonOk];
+
+        // ============ UP 键 ============
+        // 短按: APP 内功能 / 主页=launcher
         up->OnClick([this, &finance]() {
             Application::GetInstance().Schedule([this, &finance]() {
                 if (finance.Active()) {
@@ -148,7 +143,15 @@ private:
                 auto& tetris = TetrisApp::Get();
                 if (tetris.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        tetris.HandleKey(0);
+                        tetris.HandleKey(0);   // 左移
+                        lvgl_port_unlock();
+                    }
+                    return;
+                }
+                auto& player = PlayerApp::Get();
+                if (player.Active()) {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        player.HandleKey(0);   // 音量+
                         lvgl_port_unlock();
                     }
                     return;
@@ -156,41 +159,15 @@ private:
                 auto& mailU = MailApp::Get();
                 if (mailU.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        mailU.HandleKey(0);   // 上=上一封
+                        mailU.HandleKey(0);   // 上一封
                         lvgl_port_unlock();
                     }
                     return;
                 }
-                auto& answer = AnswerApp::Get();
-                if (answer.Active()) return;   // 答案之书无上下键功能
-                auto& sonos = SonosApp::Get();
-                if (sonos.Active()) {
+                auto& timerU = TimerApp::Get();
+                if (timerU.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        sonos.HandleKey(0);
-                        lvgl_port_unlock();
-                    }
-                    return;
-                }
-                auto& podx = PodApp::Get();
-                if (podx.Active()) {
-                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        podx.HandleKey(0);
-                        lvgl_port_unlock();
-                    }
-                    return;
-                }
-                auto& timerapp = TimerApp::Get();
-                if (timerapp.Active()) {
-                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        timerapp.HandleKey(0);
-                        lvgl_port_unlock();
-                    }
-                    return;
-                }
-                auto& pod = PodApp::Get();
-                if (pod.Active()) {
-                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        pod.HandleKey(0);
+                        timerU.HandleKey(0);   // 上一个预设
                         lvgl_port_unlock();
                     }
                     return;
@@ -205,28 +182,13 @@ private:
                 ChangeVolume(10);
             });
         });
+        // 长按 UP: 播放器=上一曲;金融=切tab;主页=音量100
         up->OnLongPress([this, &finance]() {
             Application::GetInstance().Schedule([this, &finance]() {
-                auto& sonosL = SonosApp::Get();
-                if (sonosL.Active()) {
+                auto& player = PlayerApp::Get();
+                if (player.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        sonosL.HandleKey(4);
-                        lvgl_port_unlock();
-                    }
-                    return;   // 播放器内长按上=上一首
-                }
-                auto& podL = PodApp::Get();
-                if (podL.Active()) {
-                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        podL.HandleKey(4);
-                        lvgl_port_unlock();
-                    }
-                    return;
-                }
-                auto& timerU = TimerApp::Get();
-                if (timerU.Active()) {
-                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        timerU.HandleKey(4);   // 编辑态:切换分/秒字段
+                        player.HandleKey(4);   // 上一曲
                         lvgl_port_unlock();
                     }
                     return;
@@ -238,12 +200,17 @@ private:
                     }
                     return;
                 }
+                auto& tetris = TetrisApp::Get();
+                if (tetris.Active()) {
+                    tetris.Leave();
+                    return;
+                }
                 GetAudioCodec()->SetOutputVolume(100);
                 GetDisplay()->ShowNotification(Lang::Strings::MAX_VOLUME);
             });
         });
 
-        auto down = adc_button_[kAdcButtonDown];
+        // ============ DOWN 键 ============
         down->OnClick([this, &finance]() {
             Application::GetInstance().Schedule([this, &finance]() {
                 if (finance.Active()) {
@@ -256,7 +223,15 @@ private:
                 auto& tetris = TetrisApp::Get();
                 if (tetris.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        tetris.HandleKey(1);
+                        tetris.HandleKey(1);   // 右移
+                        lvgl_port_unlock();
+                    }
+                    return;
+                }
+                auto& player = PlayerApp::Get();
+                if (player.Active()) {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        player.HandleKey(1);   // 音量-
                         lvgl_port_unlock();
                     }
                     return;
@@ -264,41 +239,15 @@ private:
                 auto& mailD = MailApp::Get();
                 if (mailD.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        mailD.HandleKey(1);   // 下=下一封
+                        mailD.HandleKey(1);   // 下一封
                         lvgl_port_unlock();
                     }
                     return;
                 }
-                auto& answer = AnswerApp::Get();
-                if (answer.Active()) return;   // 答案之书无上下键功能
-                auto& sonos = SonosApp::Get();
-                if (sonos.Active()) {
+                auto& timerD = TimerApp::Get();
+                if (timerD.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        sonos.HandleKey(1);
-                        lvgl_port_unlock();
-                    }
-                    return;
-                }
-                auto& podx = PodApp::Get();
-                if (podx.Active()) {
-                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        podx.HandleKey(1);
-                        lvgl_port_unlock();
-                    }
-                    return;
-                }
-                auto& timerapp = TimerApp::Get();
-                if (timerapp.Active()) {
-                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        timerapp.HandleKey(1);
-                        lvgl_port_unlock();
-                    }
-                    return;
-                }
-                auto& pod = PodApp::Get();
-                if (pod.Active()) {
-                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        pod.HandleKey(1);
+                        timerD.HandleKey(1);   // 下一个预设
                         lvgl_port_unlock();
                     }
                     return;
@@ -313,36 +262,13 @@ private:
                 ChangeVolume(-10);
             });
         });
+        // 长按 DOWN: 播放器=下一曲;金融=切tab;方块=硬降;主页=静音
         down->OnLongPress([this, &finance]() {
             Application::GetInstance().Schedule([this, &finance]() {
-                auto& sonosL = SonosApp::Get();
-                if (sonosL.Active()) {
+                auto& player = PlayerApp::Get();
+                if (player.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        sonosL.HandleKey(5);
-                        lvgl_port_unlock();
-                    }
-                    return;   // 播放器内长按下=下一首
-                }
-                auto& podL = PodApp::Get();
-                if (podL.Active()) {
-                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        podL.HandleKey(5);
-                        lvgl_port_unlock();
-                    }
-                    return;
-                }
-                auto& tetrisD = TetrisApp::Get();
-                if (tetrisD.Active()) {
-                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        tetrisD.HandleKey(5);   // 长按下:快速落下
-                        lvgl_port_unlock();
-                    }
-                    return;
-                }
-                auto& timerD = TimerApp::Get();
-                if (timerD.Active()) {
-                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        timerD.HandleKey(5);   // 编辑态:切换分/秒字段
+                        player.HandleKey(5);   // 下一曲
                         lvgl_port_unlock();
                     }
                     return;
@@ -354,21 +280,27 @@ private:
                     }
                     return;
                 }
+                auto& tetris = TetrisApp::Get();
+                if (tetris.Active()) {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        tetris.HandleKey(5);   // 硬降
+                        lvgl_port_unlock();
+                    }
+                    return;
+                }
                 GetAudioCodec()->SetOutputVolume(0);
                 GetDisplay()->ShowNotification(Lang::Strings::MUTED);
             });
         });
 
-        auto ok = adc_button_[kAdcButtonOk];
+        // ============ OK 键 ============
         ok->OnClick([this, &finance]() {
             ESP_LOGI(TAG, "[key] OK click @%lld", (long long)esp_timer_get_time());
             Application::GetInstance().Schedule([this, &finance]() {
-                // 长按触发后 1 秒内的 click 一律忽略(ADC 按键抖动会让
-                // 长按+click 双触发,导致对话和 APP 同时打开)
                 extern int64_t g_ok_longpress_us;
                 if (g_ok_longpress_us != 0 &&
                     esp_timer_get_time() - g_ok_longpress_us < 3000000LL) {
-                    return;   // 长按后 3s 内的 click 忽略(ADC 抖动实测 2.7s 处仍触发)
+                    return;   // 长按后 3s 内的 click 忽略(ADC 抖动防双触发)
                 }
                 if (finance.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
@@ -380,53 +312,36 @@ private:
                 auto& tetris = TetrisApp::Get();
                 if (tetris.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        tetris.HandleKey(2);
+                        tetris.HandleKey(2);   // 旋转
                         lvgl_port_unlock();
                     }
                     return;
                 }
-                auto& mailapp = MailApp::Get();
-                if (mailapp.Active()) {
+                auto& player = PlayerApp::Get();
+                if (player.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        mailapp.HandleKey(2);   // OK=刷新
+                        player.HandleKey(2);   // 播放/暂停
                         lvgl_port_unlock();
                     }
                     return;
                 }
-                auto& answer = AnswerApp::Get();
-                if (answer.Active()) {
+                auto& mailOK = MailApp::Get();
+                if (mailOK.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        answer.HandleKey(2);
+                        mailOK.HandleKey(2);   // 刷新
                         lvgl_port_unlock();
                     }
                     return;
                 }
-                auto& sonos = SonosApp::Get();
-                if (sonos.Active()) {
+                auto& timerOK = TimerApp::Get();
+                if (timerOK.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        sonos.HandleKey(2);
+                        timerOK.HandleKey(2);   // 开始/暂停/继续
                         lvgl_port_unlock();
                     }
                     return;
                 }
-                auto& pod = PodApp::Get();
-                if (pod.Active()) {
-                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        pod.HandleKey(2);
-                        lvgl_port_unlock();
-                    }
-                    return;
-                }
-                auto& timerapp = TimerApp::Get();
-                if (timerapp.Active()) {
-                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        timerapp.HandleKey(2);
-                        lvgl_port_unlock();
-                    }
-                    return;
-                }
-                // OK 短按:对话中或刚结束对话(5s 冷却)=继续对话开关;
-                // 平静状态=进入启动栏选中的 APP(防对话结束瞬间误触)
+                // 主页:对话中/刚结束=切换对话;平静=进选中 APP
                 {
                     static int64_t s_last_chat_us = 0;
                     int64_t now_us = esp_timer_get_time();
@@ -445,12 +360,24 @@ private:
                 }
             });
         });
+        // 双击 OK: 播放器=切 tab
+        ok->OnDoubleClick([this]() {
+            Application::GetInstance().Schedule([this]() {
+                auto& player = PlayerApp::Get();
+                if (player.Active()) {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        player.HandleKey(3);
+                        lvgl_port_unlock();
+                    }
+                }
+            });
+        });
+        // 长按 OK: APP=退出;主页=对话
         ok->OnLongPress([this, &finance]() {
             ESP_LOGI(TAG, "[key] OK long @%lld", (long long)esp_timer_get_time());
             Application::GetInstance().Schedule([this, &finance]() {
                 extern int64_t g_ok_longpress_us;
                 g_ok_longpress_us = esp_timer_get_time();
-                // 金融 APP 内长按返回主页;主页 idle 时长按进入金融
                 if (finance.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
                         finance.HandleKey(FinanceApp::KEY_OK_LONG);
@@ -459,37 +386,15 @@ private:
                     return;
                 }
                 auto& tetris = TetrisApp::Get();
-                if (tetris.Active()) {
-                    tetris.Leave();   // 游戏内长按 OK = 退出游戏
-                    return;
-                }
+                if (tetris.Active()) { tetris.Leave(); return; }
+                auto& player = PlayerApp::Get();
+                if (player.Active()) { player.Leave(); return; }
                 auto& mailL = MailApp::Get();
-                if (mailL.Active()) {
-                    mailL.Leave();
-                    return;
-                }
-                auto& answer = AnswerApp::Get();
-                if (answer.Active()) {
-                    answer.Leave();   // 答案之书内长按 OK = 退出
-                    return;
-                }
-                auto& sonos = SonosApp::Get();
-                if (sonos.Active()) {
-                    sonos.Leave();   // SONOS 内长按 OK = 退出
-                    return;
-                }
-                auto& pod = PodApp::Get();
-                if (pod.Active()) {
-                    pod.Leave();   // Pod 内长按 OK = 退出
-                    return;
-                }
-                auto& timerapp = TimerApp::Get();
-                if (timerapp.Active()) {
-                    timerapp.Leave();   // 计时器内长按 OK = 退出(返回主页)
-                    return;
-                }
+                if (mailL.Active()) { mailL.Leave(); return; }
+                auto& timerL = TimerApp::Get();
+                if (timerL.Active()) { timerL.Leave(); return; }
                 if (Application::GetInstance().GetDeviceState() == kDeviceStateIdle) {
-                    ToggleChat();   // 主页长按 OK = 小智语音对话
+                    ToggleChat();
                 }
             });
         });

@@ -1116,14 +1116,7 @@ void Application::StartNotification(std::string audio_url, std::vector<NotifySub
     board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
     audio_service_.EnableVoiceProcessing(false);
     audio_service_.EnableWakeWordDetection(audio_service_.IsAfeWakeWord());
-    {
-        int t0 = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-        ESP_LOGI(TAG, "[notify] before release: total=%d", t0);
-        audio_service_.ReleaseWakeWordResources();
-        int t1 = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-        int l1 = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
-        ESP_LOGI(TAG, "[notify] after release: total=%d(+%d) largest=%d", t1, t1 - t0, l1);
-    }
+    audio_service_.ReleaseWakeWordResources();
     while (audio_service_.PopPacketFromSendQueue()) {
         // Discard microphone audio left over from a previous conversation.
     }

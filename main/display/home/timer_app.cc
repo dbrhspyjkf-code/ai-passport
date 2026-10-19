@@ -32,7 +32,7 @@ void TimerApp::Create(lv_obj_t* parent) {
 
     // 顶部大字(选时=预设 / 运行=倒计时)
     big_label_ = lv_label_create(root_);
-    lv_obj_set_style_text_font(big_label_, &lv_font_montserrat_48, 0);
+    lv_obj_set_style_text_font(big_label_, &lv_font_montserrat_32, 0);
     lv_obj_set_style_text_color(big_label_, lv_color_hex(0x9FE870), 0);
     lv_label_set_text(big_label_, "05:00");
     lv_obj_align(big_label_, LV_ALIGN_TOP_MID, 0, 26);
@@ -101,7 +101,7 @@ void TimerApp::Tick() {
     if (remain_ == 3) {
         Application::GetInstance().Schedule([]() {
             Application::GetInstance().GetAudioService().PlaySound(
-                Lang::Sounds::OGG_SILENCE0);
+                Lang::Sounds::OGG_CHIME_FULL);
         });
     }
     if (remain_ <= 0) {
