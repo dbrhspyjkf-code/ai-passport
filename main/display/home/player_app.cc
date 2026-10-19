@@ -4,6 +4,7 @@
 #include "player_app.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 
@@ -15,9 +16,14 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "home_screen.h"
+
 LV_FONT_DECLARE(font_home_cn_16);
 
 static const char* TAG = "player";
+static constexpr int kCoverSize = 64;
+static constexpr int kCoverPaletteBytes = 256 * 4;
+static constexpr int kCoverDataBytes = kCoverPaletteBytes + (kCoverSize * kCoverSize);
 
 // ---------------- HA HTTP 辅助 ----------------
 
@@ -139,8 +145,15 @@ void PlayerApp::Create(lv_obj_t* parent) {
         lv_obj_center(tab_lbl_[i]);
     }
 
+    // 专辑封面：服务器已转为 LVGL 原生 I8；设备只在 APP 打开后申请 5120B。
+    cover_img_ = lv_image_create(root_);
+    lv_obj_set_size(cover_img_, kCoverSize, kCoverSize);
+    // TAB 底部(y=40)与标题顶部之间的视觉居中位置：64px 封面自 y=64 开始。
+    lv_obj_align(cover_img_, LV_ALIGN_TOP_MID, 0, 64);
+    lv_obj_add_flag(cover_img_, LV_OBJ_FLAG_HIDDEN);
+
     // 状态/曲名/艺术家
-    // 曲名(大字,横向竖向居中偏上)
+    // 曲名（封面下方）
     title_label_ = lv_label_create(root_);
     lv_obj_set_style_text_font(title_label_, &font_home_cn_16, 0);   // 中英混排
     lv_obj_set_style_text_color(title_label_, lv_color_hex(0x9FE870), 0);
@@ -148,7 +161,7 @@ void PlayerApp::Create(lv_obj_t* parent) {
     lv_obj_set_width(title_label_, LV_HOR_RES - 24);
     lv_label_set_long_mode(title_label_, LV_LABEL_LONG_DOT);
     lv_label_set_text(title_label_, "…");
-    lv_obj_align(title_label_, LV_ALIGN_CENTER, 0, -30);
+    lv_obj_align(title_label_, LV_ALIGN_CENTER, 0, 0);
 
     // 演唱者(居中偏下)
     artist_label_ = lv_label_create(root_);
@@ -158,12 +171,12 @@ void PlayerApp::Create(lv_obj_t* parent) {
     lv_obj_set_width(artist_label_, LV_HOR_RES - 24);
     lv_label_set_long_mode(artist_label_, LV_LABEL_LONG_DOT);
     lv_label_set_text(artist_label_, "");
-    lv_obj_align(artist_label_, LV_ALIGN_CENTER, 0, 10);
+    lv_obj_align(artist_label_, LV_ALIGN_CENTER, 0, 26);
 
     // 进度条 + 时间(M5-DIAL 同款钟表式推进,500ms timer 平滑)
     pos_bar_ = lv_bar_create(root_);
-    lv_obj_set_size(pos_bar_, 200, 6);
-    lv_obj_align(pos_bar_, LV_ALIGN_CENTER, 0, 52);
+    lv_obj_set_size(pos_bar_, 200, 4);
+    lv_obj_align(pos_bar_, LV_ALIGN_CENTER, 0, 64);
     lv_bar_set_range(pos_bar_, 0, 100);
     lv_bar_set_value(pos_bar_, 0, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(pos_bar_, lv_color_hex(0x222A31), 0);
@@ -192,7 +205,7 @@ void PlayerApp::Create(lv_obj_t* parent) {
     lv_obj_set_style_text_font(prog_label_, &font_home_cn_16, 0);
     lv_obj_set_style_text_color(prog_label_, lv_color_hex(0xAAB4BE), 0);
     lv_label_set_text(prog_label_, "");
-    lv_obj_align(prog_label_, LV_ALIGN_CENTER, 0, 68);
+    lv_obj_align(prog_label_, LV_ALIGN_CENTER, 0, 80);
 
     // 底部操作说明
     pos_label_ = lv_label_create(root_);
@@ -231,13 +244,17 @@ void PlayerApp::Run() {
             case 5: ESP_LOGI(TAG, "next %s", ha_post(cfgs[t].base_url, cfgs[t].token, cfgs[t].entity_id, "media_next_track", nullptr) ? "OK" : "FAIL"); break;
             default: break;
         }
-        // 两个播放器都轮询(切 tab 即有数据);当前 tab 每 3s,另一个 15s
+        // 两个播放器都轮询（切 tab 即有数据）；当前 tab 每 3s，另一个 15s。
         FetchStatus(cur_);
         static int slow = 0;
         if (++slow >= 5) {
             slow = 0;
             FetchStatus(1 - cur_);
         }
+        // Sonos 换歌后，下载服务器已转换好的 I4 封面；失败降级为无封面。
+        if (cover_requested_.exchange(false)) FetchCover();
+        // Leave/Destroy 可能在 HTTP 期间发生；退出后不再触碰 UI。
+        if (!running_.load()) break;
         if (lvgl_port_lock(pdMS_TO_TICKS(1000))) {
             UpdateUi();
             lvgl_port_unlock();
@@ -245,6 +262,7 @@ void PlayerApp::Run() {
         for (int i = 0; i < 30 && running_.load(); i++) vTaskDelay(pdMS_TO_TICKS(100));
         if (!running_.load()) break;
     }
+    ResetCover();
     vTaskDelete(NULL);
 }
 
@@ -300,6 +318,10 @@ bool PlayerApp::FetchStatus(int idx) {
             if (title_changed) {
                 ps.display_pos = ps.ha_pos;         // 新歌:从服务端位置起步
                 ps.anchor_us_ = mono;
+                if (idx == 0) {                     // Sonos 换歌时请求新封面
+                    cover_ready_ = false;
+                    cover_requested_.store(true);
+                }
             } else {
                 // 与"当前实时估算"比较(不是过期的 display_pos——
                 // 那个恒为上次锚定值,MA 恒 0 时每轮都误重置弹回起点)
@@ -319,6 +341,67 @@ bool PlayerApp::FetchStatus(int idx) {
         lvgl_port_unlock();
     }
     return true;
+}
+
+bool PlayerApp::FetchCover() {
+    if (!running_.load()) return false;
+    // 不使用静态大数组：仅在 Player APP task 内按需申请，失败即降级为无封面。
+    if (cover_data_ == nullptr) {
+        cover_data_ = static_cast<uint8_t*>(heap_caps_malloc(kCoverDataBytes, MALLOC_CAP_8BIT));
+        if (cover_data_ == nullptr) {
+            ESP_LOGW(TAG, "cover skipped: cannot allocate %dB", kCoverDataBytes);
+            return false;
+        }
+    }
+
+    esp_http_client_config_t cfg = {};
+    cfg.url = HOME_AGENDA_BASE_URL "/assets/cover.i8";
+    cfg.method = HTTP_METHOD_GET;
+    cfg.timeout_ms = 8000;
+    cfg.buffer_size = 512;
+    esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    if (client == nullptr) return false;
+
+    int length = 0;
+    bool ok = false;
+    if (esp_http_client_open(client, 0) == ESP_OK) {
+        esp_http_client_fetch_headers(client);
+        int read = 0;
+        while (length < kCoverDataBytes &&
+               (read = esp_http_client_read(client, reinterpret_cast<char*>(cover_data_) + length,
+                                             kCoverDataBytes - length)) > 0) {
+            length += read;
+        }
+        ok = esp_http_client_get_status_code(client) == 200 && length == kCoverDataBytes;
+    }
+    esp_http_client_close(client);
+    esp_http_client_cleanup(client);
+    if (!ok || !running_.load()) {
+        ESP_LOGW(TAG, "cover unavailable: bytes=%d expected=%d", length, kCoverDataBytes);
+        return false;
+    }
+
+    cover_dsc_ = {};
+    cover_dsc_.header.magic = LV_IMAGE_HEADER_MAGIC;
+    cover_dsc_.header.cf = LV_COLOR_FORMAT_I8;
+    cover_dsc_.header.w = kCoverSize;
+    cover_dsc_.header.h = kCoverSize;
+    cover_dsc_.header.stride = kCoverSize;
+    cover_dsc_.data_size = kCoverDataBytes;
+    cover_dsc_.data = cover_data_;
+    cover_ready_ = true;
+    ESP_LOGI(TAG, "cover ready: %dB", length);
+    return true;
+}
+
+void PlayerApp::ResetCover() {
+    cover_ready_ = false;
+    cover_requested_.store(false);
+    if (cover_data_ != nullptr) {
+        heap_caps_free(cover_data_);
+        cover_data_ = nullptr;
+    }
+    cover_dsc_ = {};
 }
 
 void PlayerApp::SendCommand(int idx, const char* service) {
@@ -405,6 +488,14 @@ void PlayerApp::UpdateUi() {
         lv_label_set_text(tab_lbl_[i], cfgs[i].tab_name);
     }
     PlayerState& ps = st_[cur_];
+    if (cover_img_ != nullptr) {
+        if (cur_ == 0 && cover_ready_) {
+            lv_image_set_src(cover_img_, &cover_dsc_);
+            lv_obj_clear_flag(cover_img_, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(cover_img_, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
     if (!ps.valid) {
         lv_label_set_text(title_label_, "连接中…");
         lv_label_set_text(artist_label_, "");
@@ -452,6 +543,7 @@ void PlayerApp::Destroy() {
             lv_obj_delete(root_);
             root_ = nullptr;
         }
+        cover_img_ = nullptr;
         lvgl_port_unlock();
     }
 }

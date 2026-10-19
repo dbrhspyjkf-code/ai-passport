@@ -6,6 +6,7 @@
 //       双击 OK=切 tab,长按 OK=退出(board 层)。
 
 #include <atomic>
+#include <cstdint>
 
 #include "lvgl.h"
 
@@ -39,6 +40,8 @@ private:
     bool FetchStatus(int idx);
     void SendCommand(int idx, const char* service);
     void ApplyVolume(int idx, int delta);
+    bool FetchCover();
+    void ResetCover();
     void UpdateUi();
     void TickProgress();   // 500ms 进度推进(钟表式)
     void SwitchTab(int idx);
@@ -69,6 +72,11 @@ private:
     lv_obj_t* root_ = nullptr;
     lv_obj_t* tab_btn_[kPlayers] = {};
     lv_obj_t* tab_lbl_[kPlayers] = {};
+    lv_obj_t* cover_img_ = nullptr;
+    lv_image_dsc_t cover_dsc_ = {};
+    uint8_t* cover_data_ = nullptr;    // 仅进入播放器后按需申请 5120B LVGL I8
+    std::atomic<bool> cover_requested_{false};
+    bool cover_ready_ = false;
     lv_obj_t* title_label_ = nullptr;
     lv_obj_t* artist_label_ = nullptr;
     lv_obj_t* vol_label_ = nullptr;
