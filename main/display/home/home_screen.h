@@ -80,7 +80,7 @@ private:
     lv_obj_t* battery_fill_ = nullptr;    // 电量填充(宽度按百分比)
     lv_obj_t* weather_line1_ = nullptr;   // 温度 + 天气 + 湿度
     lv_obj_t* glm_label_ = nullptr;       // GLM 5h 窗口剩余百分比
-    lv_obj_t* glm_bar_ = nullptr;         // GLM 剩余进度条
+    lv_obj_t* ds_label_ = nullptr;        // DeepSeek 余额(GLM 右侧,"DS 49.93元")
     lv_obj_t* agenda_label_ = nullptr;    // 最近的提醒/行程文本
     bool visible_ = false;
 };

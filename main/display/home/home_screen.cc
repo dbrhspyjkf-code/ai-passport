@@ -17,6 +17,7 @@
 #include "esp_lvgl_port.h"
 #include "agenda_service.h"
 #include "glm_service.h"
+#include "deepseek_service.h"
 #include "lunar_calendar.h"
 #include "weather_service.h"
 #include "mail_app.h"
@@ -176,18 +177,13 @@ void HomeScreen::Create(lv_obj_t* parent, const lv_font_t* font) {
     lv_label_set_text(glm_label_, "GLM …");
     lv_obj_align(glm_label_, LV_ALIGN_TOP_LEFT, 8, 146);
 
-    glm_bar_ = lv_bar_create(root_);
-    lv_obj_set_size(glm_bar_, 100, 8);
-    lv_obj_set_style_bg_color(glm_bar_, lv_color_hex(C_HINT), 0);
-    lv_obj_set_style_bg_opa(glm_bar_, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(glm_bar_, 0, 0);
-    lv_obj_set_style_border_width(glm_bar_, 0, 0);
-    lv_obj_set_style_pad_all(glm_bar_, 0, 0);
-    lv_obj_set_style_bg_color(glm_bar_, lv_color_hex(C_FG), LV_PART_INDICATOR);
-    lv_obj_set_style_radius(glm_bar_, 0, LV_PART_INDICATOR);
-    lv_bar_set_range(glm_bar_, 0, 100);
-    lv_bar_set_value(glm_bar_, 0, LV_ANIM_OFF);
-    lv_obj_align(glm_bar_, LV_ALIGN_TOP_LEFT, 8, 170);
+    // ---- GLM 右侧:DeepSeek 余额(与右栏日期/天气同轴;y 同 GLM 文本行) ----
+    // 动态文本:用全量中文字体(font_home_small_16 子集无 D/S/元 字形)
+    ds_label_ = lv_label_create(root_);
+    lv_obj_set_style_text_font(ds_label_, &font_home_cn_16, 0);
+    lv_obj_set_style_text_color(ds_label_, lv_color_hex(C_FG), 0);
+    lv_label_set_text(ds_label_, "DS …");
+    lv_obj_align(ds_label_, LV_ALIGN_TOP_MID, 53, 146);
 
     // ---- GLM 下方:最近的提醒/行程(hermes /agenda) ----
     // 动态中文文本:全量中文字体(1bpp 16px GB2312 子集不会缺字)
@@ -485,9 +481,17 @@ void HomeScreen::RefreshClock() {
     if (glm_remaining >= 0) {
         snprintf(buf, sizeof(buf), "GLM  %d%%", glm_remaining);
         lv_label_set_text(glm_label_, buf);
-        lv_bar_set_value(glm_bar_, glm_remaining, LV_ANIM_OFF);
     } else {
         lv_label_set_text(glm_label_, "GLM …");
+    }
+
+    // DeepSeek 余额(GLM 右侧;无数据保持占位)
+    int ds_cents = DeepseekService::Get().BalanceCents();
+    if (ds_cents >= 0) {
+        snprintf(buf, sizeof(buf), "DS %d.%02d元", ds_cents / 100, ds_cents % 100);
+        lv_label_set_text(ds_label_, buf);
+    } else {
+        lv_label_set_text(ds_label_, "DS …");
     }
 
     // 最近的提醒/行程

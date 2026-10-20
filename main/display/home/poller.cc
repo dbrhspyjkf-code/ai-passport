@@ -16,6 +16,7 @@
 #include "freertos/task.h"
 
 #include "agenda_service.h"
+#include "deepseek_service.h"
 #include "finance_app.h"
 #include "glm_service.h"
 #include "home_screen.h"
@@ -134,7 +135,7 @@ void Poller::Loop() {
         bool agenda_ok = AgendaService::Get().Poll();   // 内含金融三 tab
         last_round = now;
 
-        bool weather_ok = true, glm_ok = true;
+        bool weather_ok = true, glm_ok = true, ds_ok = true;
         bool due = first_round || (now - last_weather >= (uint32_t)s_weather_interval);
         if (due) {
             Beat();
@@ -146,6 +147,9 @@ void Poller::Loop() {
             Beat();
             glm_ok = GlmService::Get().Poll();
             last_glm = glm_ok ? now_min() : last_glm;
+            // DeepSeek 余额:与 GLM 同节奏(同服务器,5 分钟)
+            Beat();
+            ds_ok = DeepseekService::Get().Poll();
         }
         // 邮件未读:独立 2 分钟节奏(独立服务 8768)
         if (now - s_last_mail >= 2) {
@@ -189,10 +193,10 @@ void Poller::Loop() {
         last_weather = last_weather;  // no-op,保持变量活跃
 
         // 全部成功等 5 分钟;有失败 30 秒后重试失败项
-        bool round_ok = agenda_ok && weather_ok && glm_ok;
+        bool round_ok = agenda_ok && weather_ok && glm_ok && ds_ok;
         int wait_seconds = round_ok ? 300 : 30;
         for (int i = 0; i < wait_seconds * 2; i++) {
-            if (!running_.load()) break;   // Stop 快速退出
+            if (!running_.load() || generation_.load() != my_gen) break;   // Stop 快速退出
             if (refresh_now_.exchange(false)) break;
             Beat();   // 空闲等待也算存活,否则 5 分钟间隔会被看门狗误判
             vTaskDelay(pdMS_TO_TICKS(500));
