@@ -11,6 +11,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_netif.h"
+#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -66,6 +67,31 @@ void Poller::Stop() {
 }
 void Poller::Resume() { paused_.store(false); }
 
+// 看门狗心跳:任何可能阻塞的 HTTP 调用前、每轮开始、空闲等待循环内都要打。
+void Poller::Beat() {
+    beat_ms_.store((uint32_t)(esp_timer_get_time() / 1000));
+}
+
+// 心跳停滞判定吊死。典型场景:Wi-Fi 瞬断后 esp_http_client 落入 lwIP/ARP
+// 黑洞永久阻塞(timeout_ms 覆盖不到),poller 单任务随之吊死,所有数据源
+// 永久停更。整机重启是对"任务卡在系统调用里"唯一可靠的恢复:xiaozhi
+// 与 Wi-Fi 秒级重连,代价可接受。
+void Poller::WatchdogLoop() {
+    const uint32_t kTimeoutMs = 150000;   // 正常一轮最坏 ~90s(各服务超时串行)
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(15000));
+        if (!running_.load() || paused_.load()) continue;   // 主动暂停/停止不算吊死
+        uint32_t beat = beat_ms_.load();
+        uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+        if (beat != 0 && (now - beat) > kTimeoutMs) {
+            ESP_LOGE(TAG, "poller heartbeat lost for %u ms (HTTP wedged?), restarting system",
+                     (unsigned)(now - beat));
+            vTaskDelay(pdMS_TO_TICKS(300));   // 让日志写完
+            esp_restart();
+        }
+    }
+}
+
 void Poller::Loop() {
     auto now_min = []() { return (uint32_t)(esp_timer_get_time() / 1000000ULL / 60); };
     uint32_t last_weather = 0, last_glm = 0, last_round = 0, s_last_mail = 0;
@@ -75,6 +101,7 @@ void Poller::Loop() {
     // 系统默认时间已 ≥2025,旧的 SNTP 等待被跳过导致 5 秒就发请求)。
     // 最多等 90 秒;之后再等 SNTP(HTTPS 证书需要)最多 60 秒。
     for (int i = 0; i < 180; i++) {
+        Beat();
         esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
         esp_netif_ip_info_t ip = {};
         if (netif != nullptr &&
@@ -84,6 +111,7 @@ void Poller::Loop() {
         vTaskDelay(pdMS_TO_TICKS(500));
     }
     for (int i = 0; i < 120; i++) {
+        Beat();
         time_t t = time(NULL);
         struct tm tm_now;
         localtime_r(&t, &tm_now);
@@ -98,25 +126,30 @@ void Poller::Loop() {
             continue;
         }
         uint32_t now = now_min();
+        Beat();
         ESP_LOGI(TAG, "round start (t=%us, refresh=%d)", (unsigned)(esp_timer_get_time() / 1000000ULL),
                  (int)refresh_now_.load());
         // agenda + 金融:每轮(5 分钟)都刷新
+        Beat();
         bool agenda_ok = AgendaService::Get().Poll();   // 内含金融三 tab
         last_round = now;
 
         bool weather_ok = true, glm_ok = true;
         bool due = first_round || (now - last_weather >= (uint32_t)s_weather_interval);
         if (due) {
+            Beat();
             weather_ok = WeatherService::Get().Poll();
             last_weather = weather_ok ? now_min() : last_weather;
         }
         due = first_round || (now - last_glm >= (uint32_t)s_glm_interval);
         if (due) {
+            Beat();
             glm_ok = GlmService::Get().Poll();
             last_glm = glm_ok ? now_min() : last_glm;
         }
         // 邮件未读:独立 2 分钟节奏(独立服务 8768)
         if (now - s_last_mail >= 2) {
+            Beat();
             MailStatus::Get().Poll();
             s_last_mail = now_min();
             HomeScreen::Get().SetMailUnread(MailStatus::Get().Unread());
@@ -161,6 +194,7 @@ void Poller::Loop() {
         for (int i = 0; i < wait_seconds * 2; i++) {
             if (!running_.load()) break;   // Stop 快速退出
             if (refresh_now_.exchange(false)) break;
+            Beat();   // 空闲等待也算存活,否则 5 分钟间隔会被看门狗误判
             vTaskDelay(pdMS_TO_TICKS(500));
         }
         (void)last_round;
@@ -181,5 +215,17 @@ void Poller::Start() {
                     "poller", 12288, this, 3, nullptr) != pdPASS) {
         running_.store(false);
         ESP_LOGE(TAG, "poller task create failed");
+        return;
+    }
+    // 看门狗只建一次(Stop/Start 重建 poller 时复用同一监控任务)
+    static bool s_watchdog_started = false;
+    if (!s_watchdog_started) {
+        if (xTaskCreate([](void* arg) { static_cast<Poller*>(arg)->WatchdogLoop(); },
+                        "poller_wd", 2048, this, 2, nullptr) == pdPASS) {
+            s_watchdog_started = true;
+            ESP_LOGI(TAG, "watchdog started (150s heartbeat timeout)");
+        } else {
+            ESP_LOGE(TAG, "poller watchdog create failed");
+        }
     }
 }

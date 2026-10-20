@@ -5,6 +5,7 @@
 // 周期 5 分钟(天气失败自动重试逻辑在其内部);支持 RequestRefresh 提前唤醒。
 
 #include <atomic>
+#include <cstdint>
 #include <string>
 
 class Poller {
@@ -23,10 +24,13 @@ public:
 private:
     Poller() = default;
     void Loop();
+    void Beat();           // 更新看门狗心跳(每次 HTTP 调用前/等待循环内)
+    void WatchdogLoop();   // 心跳停滞=HTTP 黑洞吊死 → esp_restart() 自愈
 
     std::atomic<bool> paused_{false};
     std::atomic<bool> running_{false};
     std::atomic<bool> refresh_now_{false};
+    std::atomic<uint32_t> beat_ms_{0};   // 最近一次轮询进展的时间戳(看门狗心跳)
 };
 
 // 一次性写入各数据源的配置(在 Poller::Start 之前调用)。
