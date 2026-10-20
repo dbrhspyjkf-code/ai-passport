@@ -59,14 +59,21 @@ void Poller::RequestRefresh() {
     refresh_now_.store(true);
 }
 
-void Poller::Pause() { paused_.store(true); }
+void Poller::Pause() {
+    if (!paused_.exchange(true)) ESP_LOGI(TAG, "paused (foreground app holds network)");
+}
 // Loop 尾部:vTaskDelete 自删(Stop 释放栈的机制)
 void Poller::Stop() {
-    // 真停:running_=false 后 Loop 在下一个检测点(≤1s)退出并自删任务,
-    // 释放 12KB 栈(Pause 只是空转仍占内存,播放器需要这块内存)。
+    // 真停:代际 +1 且 running_=false 后,Loop 在下一个检测点(≤1s)退出并自删
+    // 任务,释放 12KB 栈(Pause 只是空转仍占内存,播放器/对话需要这块内存)。
+    // generation 必须自增:否则 Stop 后立刻 Start 会让老任务看到 running_
+    // 重新为真而永不退出,造成两个 poller 并存。
+    generation_.fetch_add(1);
     running_.exchange(false);
 }
-void Poller::Resume() { paused_.store(false); }
+void Poller::Resume() {
+    if (paused_.exchange(false)) ESP_LOGI(TAG, "resumed");
+}
 
 // 看门狗心跳:任何可能阻塞的 HTTP 调用前、每轮开始、空闲等待循环内都要打。
 void Poller::Beat() {
@@ -94,6 +101,7 @@ void Poller::WatchdogLoop() {
 }
 
 void Poller::Loop() {
+    const uint32_t my_gen = generation_.load();   // Stop 后若被快速 Start,老任务凭此严格退出
     auto now_min = []() { return (uint32_t)(esp_timer_get_time() / 1000000ULL / 60); };
     uint32_t last_weather = 0, last_glm = 0, last_round = 0, s_last_mail = 0;
     bool first_round = true;
@@ -121,7 +129,7 @@ void Poller::Loop() {
     }
 
     for (;;) {
-        if (!running_.load()) break;   // Stop:退出并自删(释放栈)
+        if (!running_.load() || generation_.load() != my_gen) break;   // Stop:退出并自删(释放栈)
         if (paused_.load()) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;

@@ -270,35 +270,38 @@ void PlayerApp::Run() {
             case 5: ESP_LOGI(TAG, "next %s", ha_post(cfgs[t].base_url, cfgs[t].token, cfgs[t].entity_id, "media_next_track", nullptr) ? "OK" : "FAIL"); break;
             default: break;
         }
+        // 固定本轮 tab 快照。cur_ 同时被 LVGL/按键上下文写入，不能在一次
+        // HTTP/封面/UI 流程中反复读取，否则切 TAB 时会出现 Sonos 内容串到 HomePod。
+        const int active_idx = cur_.load();
         // 不依赖 Sonos 集成默认的约一分钟扫描：当前设备首次进入/切 TAB
         // 以及之后每 6 秒请求 HA 立即更新实体。完成后短暂等待再 FetchStatus。
         int64_t now_us = esp_timer_get_time();
-        if (cur_ != last_entity_refresh_idx ||
+        if (active_idx != last_entity_refresh_idx ||
             now_us - last_entity_refresh_us >= 6000000) {
-            bool refreshed = ha_update_entity(cfgs[cur_].base_url, cfgs[cur_].token,
-                                              cfgs[cur_].entity_id);
-            ESP_LOGI(TAG, "entity refresh p%d %s", cur_, refreshed ? "OK" : "FAIL");
+            bool refreshed = ha_update_entity(cfgs[active_idx].base_url, cfgs[active_idx].token,
+                                              cfgs[active_idx].entity_id);
+            ESP_LOGI(TAG, "entity refresh p%d %s", active_idx, refreshed ? "OK" : "FAIL");
             last_entity_refresh_us = now_us;
-            last_entity_refresh_idx = cur_;
+            last_entity_refresh_idx = active_idx;
             vTaskDelay(pdMS_TO_TICKS(250));
         }
         // 两个播放器都轮询（切 tab 即有数据）；当前 tab 每 3s，另一个 15s。
-        FetchStatus(cur_);
+        FetchStatus(active_idx);
         static int slow = 0;
         if (++slow >= 5) {
             slow = 0;
-            FetchStatus(1 - cur_);
+            FetchStatus(1 - active_idx);
         }
         // 外部设备切歌时，HA 的 title 往往先于 entity_picture 到达。
         // 在 2/4/6 秒各重试一次，收到新封面后覆盖旧缓冲。
         if (cover_requested_.exchange(false)) {
-            FetchCover(cur_);
+            FetchCover(active_idx);
             if (cover_retries_left_ > 0) {
                 cover_retry_due_us_ = esp_timer_get_time() + 2000000;
             }
         } else if (cover_retries_left_ > 0 && esp_timer_get_time() >= cover_retry_due_us_) {
             --cover_retries_left_;
-            FetchCover(cur_);
+            FetchCover(active_idx);
             cover_retry_due_us_ = esp_timer_get_time() + 2000000;
         }
         // Leave/Destroy 可能在 HTTP 期间发生；退出后不再触碰 UI。
@@ -387,7 +390,7 @@ bool PlayerApp::FetchStatus(int idx) {
             }
             // 外部切歌时 title 和 entity_picture 会分两次抵达：
             // 任一变化都启动重试，picture 后到也会覆盖先前可能拿到的旧封面。
-            if (idx == cur_ && (title_changed || picture_changed)) {
+            if (idx == cur_.load() && (title_changed || picture_changed)) {
                 cover_ready_ = false;
                 cover_retries_left_ = 3;
                 cover_retry_due_us_ = 0;
@@ -489,8 +492,8 @@ void PlayerApp::ApplyVolume(int idx, int delta) {
 }
 
 void PlayerApp::SwitchTab(int idx) {
-    if (idx == cur_) return;
-    cur_ = idx;
+    if (idx == cur_.load()) return;
+    cur_.store(idx);
     // 另一台播放器此前可能只完成了后台状态轮询，尚未取图；切入时立即请求，
     // 且旧播放器封面绝不短暂显示到新 TAB。
     cover_ready_ = false;
@@ -504,19 +507,19 @@ void PlayerApp::HandleKey(int key) {
     ESP_LOGI(TAG, "key %d (active=%d)", key, active_ ? 1 : 0);
     if (!active_) return;
     switch (key) {
-        case 0: cmd_target_.store(cur_); cmd_.store(2); break;   // 音量+
-        case 1: cmd_target_.store(cur_); cmd_.store(3); break;   // 音量-
-        case 2: cmd_target_.store(cur_); cmd_.store(1); break;   // 播放/暂停
-        case 3: SwitchTab(1 - cur_); break;                      // 双击 OK:切 tab
-        case 4: cmd_target_.store(cur_); cmd_.store(4); break;   // 上一曲
-        case 5: cmd_target_.store(cur_); cmd_.store(5); break;   // 下一曲
+        case 0: cmd_target_.store(cur_.load()); cmd_.store(2); break;   // 音量+
+        case 1: cmd_target_.store(cur_.load()); cmd_.store(3); break;   // 音量-
+        case 2: cmd_target_.store(cur_.load()); cmd_.store(1); break;   // 播放/暂停
+        case 3: SwitchTab(1 - cur_.load()); break;               // 双击 OK:切 tab
+        case 4: cmd_target_.store(cur_.load()); cmd_.store(4); break;   // 上一曲
+        case 5: cmd_target_.store(cur_.load()); cmd_.store(5); break;   // 下一曲
         default: break;
     }
 }
 
 void PlayerApp::TickProgress() {
     if (!active_ || root_ == nullptr) return;
-    PlayerState& ps = st_[cur_];
+    PlayerState& ps = st_[cur_.load()];
     static int dbg = 0;
     if (++dbg % 20 == 1) {   // 每 10 秒一条
         ESP_LOGI(TAG, "tick: valid=%d dur=%.1f pos=%.0f at=%.0f lg=%.0f/%.0f st=%s",
@@ -547,7 +550,7 @@ void PlayerApp::UpdateUi() {
         {POD_HA_BASE_URL, POD_HA_TOKEN, POD_ENTITY_ID, "HomePod"},
     };
     for (int i = 0; i < kPlayers; i++) {
-        bool on = (i == cur_);
+        bool on = (i == cur_.load());
         lv_obj_set_style_border_color(tab_btn_[i],
             on ? lv_color_hex(0xFFC24B) : lv_color_hex(0x2A333D), 0);
         lv_obj_set_style_bg_color(tab_btn_[i],
@@ -556,9 +559,9 @@ void PlayerApp::UpdateUi() {
             on ? lv_color_hex(0xFFC24B) : lv_color_hex(0x8A949E), 0);
         lv_label_set_text(tab_lbl_[i], cfgs[i].tab_name);
     }
-    PlayerState& ps = st_[cur_];
+    PlayerState& ps = st_[cur_.load()];
     if (cover_img_ != nullptr) {
-        if (cover_player_ == cur_ && cover_ready_) {
+        if (cover_player_ == cur_.load() && cover_ready_) {
             lv_image_set_src(cover_img_, &cover_dsc_);
             lv_obj_clear_flag(cover_img_, LV_OBJ_FLAG_HIDDEN);
         } else {

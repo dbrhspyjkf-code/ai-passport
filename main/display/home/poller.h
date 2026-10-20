@@ -31,6 +31,7 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<bool> refresh_now_{false};
     std::atomic<uint32_t> beat_ms_{0};   // 最近一次轮询进展的时间戳(看门狗心跳)
+    std::atomic<uint32_t> generation_{0};   // Stop 时 +1:老任务据此严格退出,避免 Stop 后快速 Start 导致双任务永生
 };
 
 // 一次性写入各数据源的配置(在 Poller::Start 之前调用)。

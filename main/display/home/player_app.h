@@ -70,7 +70,7 @@ private:
     std::atomic<int> cmd_target_{0};   // 命令路由的播放器
     std::atomic<int> cmd_{0};          // 0=无 1=play_pause 2=vol_up 3=vol_down 4=prev 5=next
 
-    int cur_ = 0;   // 当前 tab
+    std::atomic<int> cur_{0};   // 当前 tab：按键/UI 与 Player 网络任务之间安全共享
     lv_obj_t* root_ = nullptr;
     lv_obj_t* tab_btn_[kPlayers] = {};
     lv_obj_t* tab_lbl_[kPlayers] = {};

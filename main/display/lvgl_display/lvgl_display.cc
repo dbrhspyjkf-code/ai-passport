@@ -11,6 +11,7 @@
 #include "board.h"
 #include "dynamic_glyph_cache.h"
 #include "home/finance_app.h"
+#include "home/player_app.h"
 #include "home/tetris_app.h"
 #include "home/answer_app.h"
 #include "home/sonos_app.h"
@@ -226,6 +227,38 @@ void LvglDisplay::UpdateStatusBar(bool update_all) {
 
     // Update time — idle 时显示像素名片主页并刷新时钟;
     // 其他状态(听/说/激活/配网)隐藏主页,小智原生界面照常。
+    //
+    // 网络仲裁(本函数 ~1Hz 幂等执行):前台 app 运行时只保留它需要的网络,
+    // 其余后台拉取暂停,回主页恢复——保证各 app 内存足够、网络稳定:
+    //   非 idle(对话/配网) → Stop:释放 12KB 栈,让内存给 TLS/音频
+    //   播放器(内存大户,自握网络) → Stop
+    //   方块/计时/答案(不用网也不依赖 poller) → Pause:停掉后台 HTTP 竞争
+    //   金融/邮件(数据来自 poller)/主页 → 正常运行
+    {
+        // PollerConfig 必须先于任何 Start():本仲裁块可能早于主页创建执行
+        // Start(),而 Start() 会把配置传导给各服务;空配置一旦传导,主页创建
+        // 时的 Start() 会因任务已运行而跳过,合法 URL 永远进不去。
+        static bool s_poller_configured = false;
+        if (!s_poller_configured) {
+            PollerConfig(WEATHER_API_URL, 10, GLM_API_KEY, 5,
+                         HOME_AGENDA_BASE_URL, 5, HOME_MAIL_BASE_URL, 2);
+            s_poller_configured = true;
+        }
+        bool now_idle = (app.GetDeviceState() == kDeviceStateIdle);
+        bool player_on = PlayerApp::Get().Active();
+        bool quiet_app_on = TetrisApp::Get().Active() || TimerApp::Get().Active() ||
+                            AnswerApp::Get().Active();
+        auto& poller = Poller::Get();
+        if (!now_idle || player_on) {
+            poller.Stop();
+        } else if (quiet_app_on) {
+            poller.Start();   // Stop 后可能处于停止态,先确保任务在(幂等)
+            poller.Pause();
+        } else {
+            poller.Start();   // 幂等:已运行则直接返回
+            poller.Resume();
+        }
+    }
     if (app.GetDeviceState() == kDeviceStateIdle) {
         time_t now = time(NULL);
         struct tm* tm_now = localtime(&now);
