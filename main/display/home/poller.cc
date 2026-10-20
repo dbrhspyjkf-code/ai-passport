@@ -222,13 +222,24 @@ void Poller::Start() {
     AgendaService::Get().Start(s_agenda_url, s_agenda_interval);
     MailStatus::Get().Start(s_mail_url, s_mail_interval);
     running_.store(true);
-    // 12KB 栈:峰值是天气 HTTPS(mbedTLS 握手)+JSON,串行复用
+    // 8KB 栈:全部数据源均为局域网纯 HTTP(TLS 早已移到服务端),峰值是
+    // cJSON 解析;栈小一号也更容易在内存碎片化后重建(见下方失败重启)。
+    // 仲裁会以 ~1Hz 重试 Start;连续 ~10s 建不出任务说明内存已碎到
+    // 无法服务(看门狗对"想跑跑不起来"是盲区),整机重启自愈。
+    static int s_start_failures = 0;
     if (xTaskCreate([](void* arg) { static_cast<Poller*>(arg)->Loop(); },
-                    "poller", 12288, this, 3, nullptr) != pdPASS) {
+                    "poller", 8192, this, 3, nullptr) != pdPASS) {
         running_.store(false);
-        ESP_LOGE(TAG, "poller task create failed");
+        if (++s_start_failures >= 10) {
+            ESP_LOGE(TAG, "poller task create failed x%d, heap too fragmented, restarting system",
+                     s_start_failures);
+            vTaskDelay(pdMS_TO_TICKS(300));
+            esp_restart();
+        }
+        ESP_LOGE(TAG, "poller task create failed (%d/10)", s_start_failures);
         return;
     }
+    s_start_failures = 0;
     // 看门狗只建一次(Stop/Start 重建 poller 时复用同一监控任务)
     static bool s_watchdog_started = false;
     if (!s_watchdog_started) {
