@@ -12,7 +12,7 @@ namespace {
 // 闲置多久后降亮度(毫秒)
 constexpr uint32_t kIdleTimeoutMs = 2 * 60 * 1000;
 // 降到的亮度(0-100)。只是变暗,不熄灭,避免误以为关机。
-constexpr uint8_t kDimBrightness = 15;
+constexpr uint8_t kDimBrightness = 8;
 // 读不到历史亮度时的兜底值(与 Settings 默认一致)
 constexpr uint8_t kFallbackBrightness = 75;
 }  // namespace
