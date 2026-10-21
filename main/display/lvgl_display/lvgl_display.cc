@@ -22,6 +22,7 @@
 #include "home/poller.h"
 #include "home/home_screen.h"
 #include "home/weather_service.h"
+#include "idle_dim.h"
 #include "jpg/image_to_jpeg.h"
 #include "lvgl_display.h"
 #include "lvgl_theme.h"
@@ -245,6 +246,8 @@ void LvglDisplay::UpdateStatusBar(bool update_all) {
             s_poller_configured = true;
         }
         bool now_idle = (app.GetDeviceState() == kDeviceStateIdle);
+        // 闲置 2 分钟自动降亮度(1Hz 推进;按键按下会立即唤醒)
+        IdleDim::Get().Tick();
         bool player_on = PlayerApp::Get().Active();
         bool quiet_app_on = TetrisApp::Get().Active() || TimerApp::Get().Active() ||
                             AnswerApp::Get().Active();

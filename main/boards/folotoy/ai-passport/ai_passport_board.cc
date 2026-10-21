@@ -13,6 +13,7 @@
 #include "display/home/player_app.h"
 #include "display/home/timer_app.h"
 #include "display/home/mail_app.h"
+#include "display/idle_dim.h"
 #include "esp_lvgl_port.h"
 #include "ssid_manager.h"
 #if __has_include("wifi_defaults.h")
@@ -128,6 +129,12 @@ private:
         auto up = adc_button_[kAdcButtonUp];
         auto down = adc_button_[kAdcButtonDown];
         auto ok = adc_button_[kAdcButtonOk];
+
+        // 任意按键按下即视为用户交互:立即从闲置降亮度状态恢复。
+        auto wake_display = []() { IdleDim::Get().Notify(); };
+        up->OnPressDown(wake_display);
+        down->OnPressDown(wake_display);
+        ok->OnPressDown(wake_display);
 
         // ============ UP 键 ============
         // 短按: APP 内功能 / 主页=launcher
