@@ -142,7 +142,7 @@ exit:    //Common return path
 }
 
 void SystemInfo::PrintTaskList() {
-    char buffer[1000];
+    char buffer[2048];   // ~30 任务 × 48B/行,1000B 会溢出(vTaskList 无长度参数)
     vTaskList(buffer);
     ESP_LOGI(TAG, "Task list: \n%s", buffer);
 }

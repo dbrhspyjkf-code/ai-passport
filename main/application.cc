@@ -281,7 +281,7 @@ void Application::Run() {
             // Print debug info every 10 seconds
             if (clock_ticks_ % 10 == 0) {
                 SystemInfo::PrintHeapStats();
-                // SystemInfo::PrintTaskList();
+                // SystemInfo::PrintTaskList();   // 栈水位测量(需要时临时打开)
                 // SystemInfo::PrintTaskCpuUsage(pdMS_TO_TICKS(1000));
             }
         }

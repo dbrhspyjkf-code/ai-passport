@@ -222,13 +222,13 @@ void Poller::Start() {
     AgendaService::Get().Start(s_agenda_url, s_agenda_interval);
     MailStatus::Get().Start(s_mail_url, s_mail_interval);
     running_.store(true);
-    // 8KB 栈:全部数据源均为局域网纯 HTTP(TLS 早已移到服务端),峰值是
-    // cJSON 解析;栈小一号也更容易在内存碎片化后重建(见下方失败重启)。
+    // 5KB 栈:实测峰值 2.8KB(全数据源局域网纯 HTTP,cJSON 解析),
+    // 栈小一号也更容易在内存碎片化后重建(见下方失败重启)。
     // 仲裁会以 ~1Hz 重试 Start;连续 ~10s 建不出任务说明内存已碎到
     // 无法服务(看门狗对"想跑跑不起来"是盲区),整机重启自愈。
     static int s_start_failures = 0;
     if (xTaskCreate([](void* arg) { static_cast<Poller*>(arg)->Loop(); },
-                    "poller", 8192, this, 3, nullptr) != pdPASS) {
+                    "poller", 5120, this, 3, nullptr) != pdPASS) {
         running_.store(false);
         if (++s_start_failures >= 10) {
             ESP_LOGE(TAG, "poller task create failed x%d, heap too fragmented, restarting system",
@@ -241,10 +241,11 @@ void Poller::Start() {
     }
     s_start_failures = 0;
     // 看门狗只建一次(Stop/Start 重建 poller 时复用同一监控任务)
+    // 实测峰值仅 ~300B,1KB 栈足够
     static bool s_watchdog_started = false;
     if (!s_watchdog_started) {
         if (xTaskCreate([](void* arg) { static_cast<Poller*>(arg)->WatchdogLoop(); },
-                        "poller_wd", 2048, this, 2, nullptr) == pdPASS) {
+                        "poller_wd", 1024, this, 2, nullptr) == pdPASS) {
             s_watchdog_started = true;
             ESP_LOGI(TAG, "watchdog started (150s heartbeat timeout)");
         } else {
