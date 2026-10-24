@@ -21,6 +21,7 @@
 #include "glm_service.h"
 #include "home_screen.h"
 #include "mail_status.h"
+#include "news_service.h"
 #include "weather_service.h"
 
 static const char* TAG = "poller";
@@ -34,11 +35,14 @@ static std::string s_agenda_url;
 static int s_agenda_interval = 5;
 static std::string s_mail_url;
 static int s_mail_interval = 2;
+static std::string s_news_url;
+static int s_news_interval = 30;
 
 void PollerConfig(const std::string& weather_url, int weather_min,
                   const char* glm_key, int glm_min,
                   const std::string& agenda_url, int agenda_min,
-                  const std::string& mail_url, int mail_min) {
+                  const std::string& mail_url, int mail_min,
+                  const std::string& news_url, int news_min) {
     s_weather_url = weather_url;
     s_weather_interval = weather_min;
     s_glm_key = glm_key;
@@ -47,6 +51,8 @@ void PollerConfig(const std::string& weather_url, int weather_min,
     s_agenda_interval = agenda_min;
     s_mail_url = mail_url;
     s_mail_interval = mail_min;
+    s_news_url = news_url;
+    s_news_interval = news_min;
 }
 
 Poller& Poller::Get() {
@@ -103,7 +109,7 @@ void Poller::WatchdogLoop() {
 void Poller::Loop() {
     const uint32_t my_gen = generation_.load();   // Stop 后若被快速 Start,老任务凭此严格退出
     auto now_min = []() { return (uint32_t)(esp_timer_get_time() / 1000000ULL / 60); };
-    uint32_t last_weather = 0, last_glm = 0, last_round = 0, s_last_mail = 0;
+    uint32_t last_weather = 0, last_glm = 0, last_round = 0, s_last_mail = 0, s_last_news = 0;
     bool first_round = true;
 
     // 等 Wi-Fi 获得 IP(否则首个 HTTP 在无网络时发起会永久阻塞——
@@ -216,6 +222,13 @@ void Poller::Loop() {
                 }
             }
         }
+        // AI 新闻:30 分钟节奏(内容一天一更,源=Pi cron 文件);手动刷新时立即执行
+        const bool force_news = NewsService::Get().ConsumeForce();
+        if (force_news || first_round || now - s_last_news >= (uint32_t)s_news_interval) {
+            Beat();
+            NewsService::Get().Poll();
+            s_last_news = now_min();
+        }
         first_round = false;
         last_weather = last_weather;  // no-op,保持变量活跃
 
@@ -226,6 +239,7 @@ void Poller::Loop() {
             if (!running_.load() || generation_.load() != my_gen) break;   // Stop 快速退出
             if (refresh_now_.exchange(false)) break;
             if (MailStatus::Get().ForcePending()) break;   // 邮件手动刷新快速响应
+            if (NewsService::Get().ForcePending()) break;  // 新闻手动刷新快速响应
             Beat();   // 空闲等待也算存活,否则 5 分钟间隔会被看门狗误判
             vTaskDelay(pdMS_TO_TICKS(500));
         }
@@ -241,6 +255,7 @@ void Poller::Start() {
     GlmService::Get().Start(s_glm_key.c_str(), s_glm_interval);
     AgendaService::Get().Start(s_agenda_url, s_agenda_interval);
     MailStatus::Get().Start(s_mail_url, s_mail_interval);
+    NewsService::Get().Start(s_news_url, s_news_interval);
     running_.store(true);
     // 5KB 栈:实测峰值 2.8KB(全数据源局域网纯 HTTP,cJSON 解析),
     // 栈小一号也更容易在内存碎片化后重建(见下方失败重启)。

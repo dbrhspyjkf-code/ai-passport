@@ -16,6 +16,7 @@
 #include "display/home/player_app.h"
 #include "display/home/timer_app.h"
 #include "display/home/mail_app.h"
+#include "display/home/news_app.h"
 #include "display/idle_dim.h"
 #include "esp_lvgl_port.h"
 #include "ssid_manager.h"
@@ -204,6 +205,14 @@ private:
                     }
                     return;
                 }
+                auto& newsU = NewsApp::Get();
+                if (newsU.Active()) {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        newsU.HandleKey(0);   // 上一日条
+                        lvgl_port_unlock();
+                    }
+                    return;
+                }
                 auto& timerU = TimerApp::Get();
                 if (timerU.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
@@ -295,6 +304,14 @@ private:
                 if (mailD.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
                         mailD.HandleKey(1);   // 下一封
+                        lvgl_port_unlock();
+                    }
+                    return;
+                }
+                auto& newsD = NewsApp::Get();
+                if (newsD.Active()) {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        newsD.HandleKey(1);   // 下一条
                         lvgl_port_unlock();
                     }
                     return;
@@ -427,6 +444,14 @@ private:
                 if (mailOK.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
                         mailOK.HandleKey(2);   // 刷新
+                        lvgl_port_unlock();
+                    }
+                    return;
+                }
+                auto& newsOK = NewsApp::Get();
+                if (newsOK.Active()) {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        newsOK.HandleKey(2);   // 刷新
                         lvgl_port_unlock();
                     }
                     return;

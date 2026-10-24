@@ -21,6 +21,7 @@
 #include "lunar_calendar.h"
 #include "weather_service.h"
 #include "mail_app.h"
+#include "news_app.h"
 #include "finance_app.h"
 #include "tetris_app.h"
 #include "flappy_app.h"
@@ -239,7 +240,8 @@ void HomeScreen::Create(lv_obj_t* parent, const lv_font_t* font) {
     launcher_items_[2] = lv_obj_create(root_);   // 答案之书
     launcher_items_[3] = lv_obj_create(root_);   // 播放器(Sonos+HomePod)
     launcher_items_[4] = lv_obj_create(root_);   // 计时器
-    launcher_items_[5] = lv_obj_create(root_);   // 方块
+    launcher_items_[5] = lv_obj_create(root_);   // 娱乐文件夹
+    launcher_items_[6] = lv_obj_create(root_);   // AI 新闻
     for (int i = 0; i < kLauncherCount; i++) {
         lv_obj_set_size(launcher_items_[i], 32, 32);
         lv_obj_set_style_bg_color(launcher_items_[i], lv_color_hex(C_BG), 0);
@@ -249,7 +251,7 @@ void HomeScreen::Create(lv_obj_t* parent, const lv_font_t* font) {
         lv_obj_set_style_pad_all(launcher_items_[i], 0, 0);
         lv_obj_set_scrollbar_mode(launcher_items_[i], LV_SCROLLBAR_MODE_OFF);
         lv_obj_clear_flag(launcher_items_[i], LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_pos(launcher_items_[i], 7 + i * 38, 248);   // 6 格 32px
+        lv_obj_set_pos(launcher_items_[i], 2 + i * 34, 248);   // 7 格 32px(240 宽排满)
     }
     {   // 金融:K 线蜡烛图(6 根,左下→右上上升,红绿混合)
         auto px = [&](int x, int y, int w, int h, uint32_t color) {
@@ -321,6 +323,14 @@ void HomeScreen::Create(lv_obj_t* parent, const lv_font_t* font) {
         lv_obj_center(tm);
     }
 
+    {   // AI 新闻图标:"闻"字(青)
+        lv_obj_t* nw = lv_label_create(launcher_items_[6]);
+        lv_obj_set_style_text_font(nw, &font_home_cn_16, 0);
+        lv_obj_set_style_text_color(nw, lv_color_hex(0x8ae0f7), 0);
+        lv_label_set_text(nw, "闻");
+        lv_obj_center(nw);
+    }
+
     app_name_label_ = lv_label_create(root_);
     lv_obj_set_style_text_font(app_name_label_, &font_home_cn_16, 0);
     lv_obj_set_style_text_color(app_name_label_, lv_color_hex(C_FG), 0);
@@ -333,7 +343,7 @@ void HomeScreen::Create(lv_obj_t* parent, const lv_font_t* font) {
 }
 
 void HomeScreen::LauncherHighlight() {
-    static const char* kNames[6] = {"金融", "邮件", "答案", "播放", "计时", "娱乐"};
+    static const char* kNames[7] = {"金融", "邮件", "答案", "播放", "计时", "娱乐", "新闻"};
     for (int i = 0; i < kLauncherCount; i++) {
         if (launcher_items_[i] == nullptr) continue;
         lv_obj_set_style_border_color(launcher_items_[i],
@@ -347,8 +357,8 @@ void HomeScreen::LauncherHighlight() {
 }
 
 void HomeScreen::SwitchApp(int idx) {
-    // APP 索引:0-4=金融/邮件/答案/播放/计时,5=娱乐文件夹,6=方块,7=Flappy,8=收音机
-    // (6-8 不在启动栏,由 GamesApp 进入;current_app_ 记真实占用者)
+    // APP 索引:0-4=金融/邮件/答案/播放/计时,5=娱乐文件夹,6=方块,7=Flappy,8=收音机,9=AI新闻
+    // (6-8 不在启动栏,由 GamesApp 进入;9=启动栏第 7 格;current_app_ 记真实占用者)
     // 已退出(Leave 后 active_=false)的同一 APP 允许重新进入
     if (idx == current_app_) {
         bool alive = false;
@@ -362,6 +372,7 @@ void HomeScreen::SwitchApp(int idx) {
             case 6: alive = TetrisApp::Get().Active(); break;
             case 7: alive = FlappyApp::Get().Active(); break;
             case 8: alive = RadioApp::Get().Active(); break;
+            case 9: alive = NewsApp::Get().Active(); break;
             default: break;
         }
         if (alive) return;   // 确实还在运行,跳过
@@ -379,6 +390,7 @@ void HomeScreen::SwitchApp(int idx) {
                 case 6: TetrisApp::Get().Destroy(); break;
                 case 7: FlappyApp::Get().Destroy(); break;
                 case 8: RadioApp::Get().Destroy(); break;
+                case 9: NewsApp::Get().Destroy(); break;
                 default: break;
             }
             lvgl_port_unlock();
@@ -411,6 +423,9 @@ void HomeScreen::SwitchApp(int idx) {
     } else if (idx == 7) {
         FlappyApp::Get().Create(parent);
         FlappyApp::Get().Enter();
+    } else if (idx == 9) {
+        NewsApp::Get().Create(parent);
+        NewsApp::Get().Enter();
     } else {
         RadioApp::Get().Create(parent);
         RadioApp::Get().Enter();
@@ -433,6 +448,7 @@ bool HomeScreen::ExitCurrentApp() {
             case 6: TetrisApp::Get().Destroy(); break;
             case 7: FlappyApp::Get().Destroy(); break;
             case 8: RadioApp::Get().Destroy(); break;
+            case 9: NewsApp::Get().Destroy(); break;
             default: break;
         }
         lvgl_port_unlock();
@@ -453,7 +469,9 @@ bool HomeScreen::HandleLauncherKey(int key) {
             LauncherHighlight();
             return true;
         case 2:   // OK:进入选中 APP(切换时销毁上一个,同时最多 1 个 APP 对象)
-            SwitchApp(launcher_sel_);
+            // 启动栏槽位 → APP 索引:0-5 恰好同名;第 7 格(新闻)=APP 9
+            // (6-8 是方块/Flappy/收音机,由娱乐文件夹进入,不在启动栏)
+            SwitchApp(launcher_sel_ == 6 ? 9 : launcher_sel_);
             return true;
         default:
             return false;

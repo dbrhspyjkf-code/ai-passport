@@ -1,6 +1,6 @@
 #pragma once
 
-// poller —— 统一后台轮询 task:agenda/金融三 tab/天气/GLM 顺序拉取。
+// poller —— 统一后台轮询 task:agenda/金融/天气/GLM/邮件/AI 新闻顺序拉取。
 // 单 task 替代四个常驻 task,省 ~20KB 常驻栈;峰值串行不叠加。
 // 周期 5 分钟(天气失败自动重试逻辑在其内部);支持 RequestRefresh 提前唤醒。
 
@@ -38,4 +38,5 @@ private:
 void PollerConfig(const std::string& weather_url, int weather_interval_min,
                   const char* glm_key, int glm_interval_min,
                   const std::string& agenda_base_url, int agenda_interval_min,
-                  const std::string& mail_base_url, int mail_interval_min);
+                  const std::string& mail_base_url, int mail_interval_min,
+                  const std::string& news_base_url, int news_interval_min);

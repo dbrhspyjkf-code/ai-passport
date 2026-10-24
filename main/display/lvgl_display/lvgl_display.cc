@@ -253,7 +253,8 @@ void LvglDisplay::UpdateStatusBar(bool update_all) {
         static bool s_poller_configured = false;
         if (!s_poller_configured) {
             PollerConfig(WEATHER_API_URL, 10, GLM_API_KEY, 5,
-                         HOME_AGENDA_BASE_URL, 5, HOME_MAIL_BASE_URL, 2);
+                         HOME_AGENDA_BASE_URL, 5, HOME_MAIL_BASE_URL, 2,
+                         HOME_NEWS_BASE_URL, 30);
             s_poller_configured = true;
         }
         bool now_idle = (app.GetDeviceState() == kDeviceStateIdle);
@@ -292,7 +293,8 @@ void LvglDisplay::UpdateStatusBar(bool update_all) {
                                      static_cast<LvglTheme*>(current_theme_)->text_font()->font());
                 // 其余 6 个 APP 懒创建(首次进入时),减少常驻 LVGL 内存
                 // 主页就绪后启动统一轮询(天气/GLM 用量/行程提醒/金融三 tab)
-                PollerConfig(WEATHER_API_URL, 10, GLM_API_KEY, 5, HOME_AGENDA_BASE_URL, 5, HOME_MAIL_BASE_URL, 2);
+                PollerConfig(WEATHER_API_URL, 10, GLM_API_KEY, 5, HOME_AGENDA_BASE_URL, 5, HOME_MAIL_BASE_URL, 2,
+                             HOME_NEWS_BASE_URL, 30);
                 Poller::Get().Start();
             }
             home_screen_->Show();
