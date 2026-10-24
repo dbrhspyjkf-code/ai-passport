@@ -40,6 +40,10 @@ public:
     Display();
     virtual ~Display();
 
+    // 释放可再生的显示缓存(如 LVGL 字形位图缓存),换取大块连续
+    // 堆内存。收音机等内存大户启动前调用(LVGL 实现持锁内部处理)。
+    virtual void ReleaseCachesForMemory() {}
+
     virtual void SetStatus(const char* status);
     virtual void ShowNotification(const char* notification, int duration_ms = 3000);
     virtual void ShowNotification(const std::string& notification, int duration_ms = 3000);

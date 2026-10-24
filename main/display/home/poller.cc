@@ -128,6 +128,16 @@ void Poller::Loop() {
         vTaskDelay(pdMS_TO_TICKS(500));
     }
 
+    // 开机冷静期:boot 后 ~5-10s 是 MQTT/OTA/音频引擎初始化的内存
+    // 高峰(min sram 实测低至 888B,首轮 HTTP 与其叠加),错开 10s
+    // 再发首轮请求抬高内存低谷。仅开机时等(后续 Stop/Start 不等)。
+    if (esp_timer_get_time() < 60000000ULL) {
+        for (int i = 0; i < 10; i++) {
+            Beat();
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+    }
+
     for (;;) {
         if (!running_.load() || generation_.load() != my_gen) break;   // Stop:退出并自删(释放栈)
         if (paused_.load()) {
@@ -136,6 +146,9 @@ void Poller::Loop() {
         }
         uint32_t now = now_min();
         Beat();
+        // 邮件 APP 的 OK 手动刷新:置位后本循环在 500ms 内跳出等待,
+        // 下一轮邮件段立即执行一次真实拉取。
+        const bool force_mail = MailStatus::Get().ConsumeForce();
         ESP_LOGI(TAG, "round start (t=%us, refresh=%d)", (unsigned)(esp_timer_get_time() / 1000000ULL),
                  (int)refresh_now_.load());
         // agenda + 金融:每轮(5 分钟)都刷新
@@ -159,8 +172,8 @@ void Poller::Loop() {
             Beat();
             ds_ok = DeepseekService::Get().Poll();
         }
-        // 邮件未读:独立 2 分钟节奏(独立服务 8768)
-        if (now - s_last_mail >= 2) {
+        // 邮件未读:独立 2 分钟节奏(独立服务 8768);手动刷新时立即执行
+        if (force_mail || now - s_last_mail >= 2) {
             Beat();
             MailStatus::Get().Poll();
             s_last_mail = now_min();
@@ -181,19 +194,25 @@ void Poller::Loop() {
                              mfrom[0] ? mfrom : "未知", msubj);
                     display->ShowNotification(notify_buf);
                 }
-                // 提示音(独立任务推官方管线,已验证模式)
-                static bool s_snd_busy = false;
-                if (!s_snd_busy) {
-                    s_snd_busy = true;
-                    xTaskCreate(
-                        [](void*) {
-                            Application::GetInstance().GetAudioService().PlaySound(
-                                Lang::Sounds::OGG_POPUP);
-                            vTaskDelay(pdMS_TO_TICKS(800));
-                            s_snd_busy = false;
-                            vTaskDelete(nullptr);
+                // 提示音:esp_timer 300ms 后由 main 任务直播。不再建
+                // 独立任务(8KB 栈在碎片化后会静默建失败,且任务模式是
+                // 已淘汰的老路径);延时错开通知条字形渲染与 codec
+                // 重初始化的并发 cache 停顿(见 tetris 结束音教训)。
+                static esp_timer_handle_t s_mail_snd = nullptr;
+                if (s_mail_snd == nullptr) {
+                    const esp_timer_create_args_t targs = {
+                        .callback = [](void*) {
+                            Application::GetInstance().Schedule([]() {
+                                Application::GetInstance().GetAudioService().PlaySound(
+                                    Lang::Sounds::OGG_POPUP);
+                            });
                         },
-                        "mail_snd", 8192, nullptr, 3, nullptr);
+                        .name = "mail_snd"};
+                    esp_timer_create(&targs, &s_mail_snd);
+                }
+                if (s_mail_snd != nullptr) {
+                    esp_timer_stop(s_mail_snd);   // 防重入:连续新邮件只响一声
+                    esp_timer_start_once(s_mail_snd, 300000);
                 }
             }
         }
@@ -206,6 +225,7 @@ void Poller::Loop() {
         for (int i = 0; i < wait_seconds * 2; i++) {
             if (!running_.load() || generation_.load() != my_gen) break;   // Stop 快速退出
             if (refresh_now_.exchange(false)) break;
+            if (MailStatus::Get().ForcePending()) break;   // 邮件手动刷新快速响应
             Beat();   // 空闲等待也算存活,否则 5 分钟间隔会被看门狗误判
             vTaskDelay(pdMS_TO_TICKS(500));
         }

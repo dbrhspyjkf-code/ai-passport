@@ -102,16 +102,17 @@ void MailStatus::Poll() {
                 cJSON* mf = cJSON_GetObjectItem(m, "from");
                 cJSON* ms = cJSON_GetObjectItem(m, "subject");
                 cJSON* mp = cJSON_GetObjectItem(m, "preview");
-                snprintf(msgs_[i].from, 72, "%s",
+                snprintf(msgs_[i].from, sizeof(msgs_[i].from), "%s",
                          cJSON_IsString(mf) && mf->valuestring ? mf->valuestring : "");
-                snprintf(msgs_[i].subject, 84, "%s",
+                snprintf(msgs_[i].subject, sizeof(msgs_[i].subject), "%s",
                          cJSON_IsString(ms) && ms->valuestring ? ms->valuestring : "");
-                snprintf(msgs_[i].preview, 304, "%s",
+                snprintf(msgs_[i].preview, sizeof(msgs_[i].preview), "%s",
                          cJSON_IsString(mp) && mp->valuestring ? mp->valuestring : "");
             }
             msg_count_ = n;
         }
         ESP_LOGI(TAG, "未读邮件 %d", unread->valueint);
     }
+    version_.fetch_add(1);   // 数据已更新,界面可据此重绘
     cJSON_Delete(root);
 }

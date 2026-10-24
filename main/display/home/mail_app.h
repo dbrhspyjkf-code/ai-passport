@@ -25,6 +25,7 @@ private:
 
     void Render();
     void Reload();   // 从 MailStatus 拷贝邮件列表
+    void SyncFromCache();   // 数据版本变化时重读缓存并重绘(500ms 定时)
 
     lv_obj_t* root_ = nullptr;
     lv_obj_t* from_label_ = nullptr;
@@ -41,4 +42,6 @@ private:
     int msg_count_ = 0;
     int cur_ = 0;
     bool active_ = false;
+    uint32_t seen_version_ = 0;      // 已渲染的 MailStatus 数据版本
+    lv_timer_t* sync_timer_ = nullptr;   // 500ms:后台拉取完成后自动刷新界面
 };

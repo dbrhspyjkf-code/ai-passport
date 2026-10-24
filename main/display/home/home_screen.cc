@@ -23,6 +23,9 @@
 #include "mail_app.h"
 #include "finance_app.h"
 #include "tetris_app.h"
+#include "flappy_app.h"
+#include "radio_app.h"
+#include "games_app.h"
 #include "answer_app.h"
 #include "player_app.h"
 #include "timer_app.h"
@@ -287,17 +290,12 @@ void HomeScreen::Create(lv_obj_t* parent, const lv_font_t* font) {
         lv_label_set_text(e, MATERIAL_SYMBOLS_MAIL);
         lv_obj_center(e);
     }
-    static const int lshape2[4][2] = {{0, 0}, {1, 0}, {1, 1}, {1, 2}};
-    for (int i = 0; i < 4; i++) {   // 方块:L 形(缩小适配 28px 框)
-        lv_obj_t* b = lv_obj_create(launcher_items_[5]);
-        lv_obj_set_size(b, 6, 6);
-        lv_obj_set_style_bg_color(b, lv_color_hex(0xf5a263), 0);
-        lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_width(b, 0, 0);
-        lv_obj_set_style_radius(b, 0, 0);
-        lv_obj_set_scrollbar_mode(b, LV_SCROLLBAR_MODE_OFF);
-        lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_pos(b, 4 + lshape2[i][1] * 7, 7 + lshape2[i][0] * 7);
+    {   // 游戏文件夹图标:手柄(Material Symbols,橙;方块 L 形图标移入文件夹页)
+        lv_obj_t* gp = lv_label_create(launcher_items_[5]);
+        lv_obj_set_style_text_font(gp, &font_material_symbols_20_4, 0);
+        lv_obj_set_style_text_color(gp, lv_color_hex(0xf5a263), 0);
+        lv_label_set_text(gp, MATERIAL_SYMBOLS_SPORTS_ESPORTS);
+        lv_obj_center(gp);
     }
     {   // 答案之书图标:"书"字(全量字体,青色)
         lv_obj_t* book = lv_label_create(launcher_items_[2]);
@@ -335,7 +333,7 @@ void HomeScreen::Create(lv_obj_t* parent, const lv_font_t* font) {
 }
 
 void HomeScreen::LauncherHighlight() {
-    static const char* kNames[6] = {"金融", "邮件", "答案", "播放", "计时", "方块"};
+    static const char* kNames[6] = {"金融", "邮件", "答案", "播放", "计时", "娱乐"};
     for (int i = 0; i < kLauncherCount; i++) {
         if (launcher_items_[i] == nullptr) continue;
         lv_obj_set_style_border_color(launcher_items_[i],
@@ -349,6 +347,8 @@ void HomeScreen::LauncherHighlight() {
 }
 
 void HomeScreen::SwitchApp(int idx) {
+    // APP 索引:0-4=金融/邮件/答案/播放/计时,5=娱乐文件夹,6=方块,7=Flappy,8=收音机
+    // (6-8 不在启动栏,由 GamesApp 进入;current_app_ 记真实占用者)
     // 已退出(Leave 后 active_=false)的同一 APP 允许重新进入
     if (idx == current_app_) {
         bool alive = false;
@@ -358,7 +358,10 @@ void HomeScreen::SwitchApp(int idx) {
             case 2: alive = AnswerApp::Get().Active(); break;
             case 3: alive = PlayerApp::Get().Active(); break;
             case 4: alive = TimerApp::Get().Active(); break;
-            case 5: alive = TetrisApp::Get().Active(); break;
+            case 5: alive = GamesApp::Get().Active(); break;
+            case 6: alive = TetrisApp::Get().Active(); break;
+            case 7: alive = FlappyApp::Get().Active(); break;
+            case 8: alive = RadioApp::Get().Active(); break;
             default: break;
         }
         if (alive) return;   // 确实还在运行,跳过
@@ -372,7 +375,10 @@ void HomeScreen::SwitchApp(int idx) {
                 case 2: AnswerApp::Get().Destroy(); break;
                 case 3: PlayerApp::Get().Destroy(); break;
                 case 4: TimerApp::Get().Destroy(); break;
-                case 5: TetrisApp::Get().Destroy(); break;
+                case 5: GamesApp::Get().Destroy(); break;
+                case 6: TetrisApp::Get().Destroy(); break;
+                case 7: FlappyApp::Get().Destroy(); break;
+                case 8: RadioApp::Get().Destroy(); break;
                 default: break;
             }
             lvgl_port_unlock();
@@ -396,10 +402,43 @@ void HomeScreen::SwitchApp(int idx) {
     } else if (idx == 4) {
         TimerApp::Get().Create(parent);
         TimerApp::Get().Enter();
-    } else {
+    } else if (idx == 5) {
+        GamesApp::Get().Create(parent);
+        GamesApp::Get().Enter();
+    } else if (idx == 6) {
         TetrisApp::Get().Create(parent);
         TetrisApp::Get().Enter();
+    } else if (idx == 7) {
+        FlappyApp::Get().Create(parent);
+        FlappyApp::Get().Enter();
+    } else {
+        RadioApp::Get().Create(parent);
+        RadioApp::Get().Enter();
     }
+}
+
+bool HomeScreen::ExitCurrentApp() {
+    // 退出即销毁:释放 APP 全部 LVGL 对象(常驻内存归零),
+    // 重进时重建(懒创建)。Destroy 幂等(root_ 已空则空操作)。
+    if (current_app_ < 0) return false;
+    int idx = current_app_;
+    if (lvgl_port_lock(pdMS_TO_TICKS(1000))) {
+        switch (idx) {
+            case 0: FinanceApp::Get().Destroy(); break;
+            case 1: MailApp::Get().Destroy(); break;
+            case 2: AnswerApp::Get().Destroy(); break;
+            case 3: PlayerApp::Get().Destroy(); break;
+            case 4: TimerApp::Get().Destroy(); break;
+            case 5: GamesApp::Get().Destroy(); break;
+            case 6: TetrisApp::Get().Destroy(); break;
+            case 7: FlappyApp::Get().Destroy(); break;
+            case 8: RadioApp::Get().Destroy(); break;
+            default: break;
+        }
+        lvgl_port_unlock();
+    }
+    current_app_ = -1;
+    return true;
 }
 
 bool HomeScreen::HandleLauncherKey(int key) {

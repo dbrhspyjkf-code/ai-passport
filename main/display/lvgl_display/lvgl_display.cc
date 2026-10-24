@@ -14,6 +14,7 @@
 #include "home/player_app.h"
 #include "home/tetris_app.h"
 #include "home/answer_app.h"
+#include "home/radio_app.h"
 #include "home/sonos_app.h"
 #include "home/pod_app.h"
 #include "home/timer_app.h"
@@ -29,6 +30,16 @@
 #include "settings.h"
 
 #define TAG "Display"
+
+// 释放字形位图缓存换大块连续堆内存(缓存随运行时间增长,是碎片化
+// 主源;清掉后按需自动重建)。必须在 LVGL 上下文/持锁调用。
+void LvglDisplay::ReleaseCachesForMemory() {
+    DisplayLockGuard lock(this);
+    if (dynamic_glyph_cache_ != nullptr) {
+        dynamic_glyph_cache_->Clear();
+        ESP_LOGI(TAG, "glyph cache cleared for memory");
+    }
+}
 
 LvglDisplay::LvglDisplay() {
     dynamic_glyph_cache_ = std::make_unique<DynamicGlyphCache>();
@@ -249,10 +260,11 @@ void LvglDisplay::UpdateStatusBar(bool update_all) {
         // 闲置 2 分钟自动降亮度(1Hz 推进;按键按下会立即唤醒)
         IdleDim::Get().Tick();
         bool player_on = PlayerApp::Get().Active();
+        bool radio_on = RadioApp::Get().Active();   // 收音机=内存+网络大户,同播放器处理
         bool quiet_app_on = TetrisApp::Get().Active() || TimerApp::Get().Active() ||
                             AnswerApp::Get().Active();
         auto& poller = Poller::Get();
-        if (!now_idle || player_on) {
+        if (!now_idle || player_on || radio_on) {
             poller.Stop();
         } else if (quiet_app_on) {
             poller.Start();   // Stop 后可能处于停止态,先确保任务在(幂等)
@@ -263,6 +275,13 @@ void LvglDisplay::UpdateStatusBar(bool update_all) {
         }
     }
     if (app.GetDeviceState() == kDeviceStateIdle) {
+        // 收音机播放期间跳过主页时钟/天气刷新:分钟时钟改字触发像素
+        // 字形渲染(flash XIP),与音频流 DMA 缓存争抢曾致 taskLVGL
+        // 卡死 WDT(整分钟规律性重启,2026-10-24 实锤);退出后下个
+        // 分钟 tick 自动补刷
+        if (RadioApp::Get().Active() && RadioApp::Get().TaskRunning()) {
+            return;
+        }
         time_t now = time(NULL);
         struct tm* tm_now = localtime(&now);
         {

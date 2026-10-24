@@ -23,6 +23,14 @@ public:
     // 取走新邮件信息(一次性):有新邮件返回 true 并填充发件人/主题。
     bool TakeNewMail(char* from, size_t from_cap, char* subject, size_t subject_cap);
 
+    // 请求轮询任务尽快拉取一次(邮件 APP 按 OK 手动刷新用)。
+    void RequestNow() { force_now_.store(true); }
+    bool ForcePending() const { return force_now_.load(); }
+    bool ConsumeForce() { return force_now_.exchange(false); }
+
+    // 数据版本:每次成功 Poll 后 +1,界面据此判断是否需要重绘。
+    uint32_t Version() const { return version_.load(); }
+
     // 未读邮件条数(最近一次 Poll 缓存)。
     int MessageCount() const { return msg_count_; }
     // 取第 idx 封(idx < MessageCount);返回 false 越界。
@@ -34,6 +42,8 @@ private:
     MailStatus() = default;
 
     std::atomic<int> unread_{-1};
+    std::atomic<bool> force_now_{false};   // 手动刷新请求(由轮询任务消费)
+    std::atomic<uint32_t> version_{0};     // 成功 Poll 数据版本
     bool has_new_ = false;
     char new_from_[64] = {};
     char new_subject_[128] = {};

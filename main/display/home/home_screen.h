@@ -54,6 +54,7 @@ public:
     // key: 0=UP 1=DOWN 2=OK_CLICK 3=OK_LONG
     bool HandleLauncherKey(int key);
     void SwitchApp(int idx);   // 切换 APP(销毁上一个)
+    bool ExitCurrentApp();     // 退出即销毁当前 APP(释放常驻内存),无 APP 则 false
     void LauncherHighlight();
     int launcher_selected() const { return launcher_sel_; }
 
@@ -73,7 +74,7 @@ private:
     lv_timer_t* mail_blink_ = nullptr;       // 未读邮件信封图标(有未读才显示)
     lv_obj_t* app_name_label_ = nullptr;   // 横线下方:选中 APP 名
     lv_obj_t* launcher_items_[6] = {};
-    static const int kLauncherCount = 6;   // 金融/Email/答案/播放器/计时/方块
+    static const int kLauncherCount = 6;   // 金融/Email/答案/播放器/计时/游戏文件夹
     int launcher_sel_ = 0;
     lv_obj_t* battery_text_ = nullptr;    // "70%"(含充电 + 后缀)
     lv_obj_t* battery_frame_ = nullptr;   // 像素电池外框

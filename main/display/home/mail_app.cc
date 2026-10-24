@@ -74,6 +74,13 @@ void MailApp::Create(lv_obj_t* parent) {
     lv_label_set_text(body_label_, "");
     lv_obj_align(body_label_, LV_ALIGN_TOP_LEFT, 0, 84);
 
+    // 500ms 检查数据版本:OK 刷新是异步的(由 poller 任务拉取),
+    // 数据回来后才重绘——否则按键毫无反馈。
+    sync_timer_ = lv_timer_create([](lv_timer_t* t) {
+        static_cast<MailApp*>(lv_timer_get_user_data(t))->SyncFromCache();
+    }, 500, this);
+    lv_timer_pause(sync_timer_);
+
     lv_obj_add_flag(root_, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -105,6 +112,15 @@ void MailApp::Render() {
     lv_label_set_text(body_label_, msgs_[cur_].preview);
 }
 
+void MailApp::SyncFromCache() {
+    if (!active_) return;
+    const uint32_t version = MailStatus::Get().Version();
+    if (version == seen_version_) return;
+    seen_version_ = version;
+    Reload();
+    Render();
+}
+
 void MailApp::HandleKey(int key) {
     if (!active_) return;
     switch (key) {
@@ -120,9 +136,16 @@ void MailApp::HandleKey(int key) {
                 Render();
             }
             break;
-        case 2:   // OK:刷新
-            Reload();
-            Render();
+        case 2:   // OK:请求真实拉取(异步),数据到达后由 sync_timer_ 重绘
+            MailStatus::Get().RequestNow();
+            if (msg_count_ <= 0) {
+                lv_label_set_text(index_label_, "");
+                lv_label_set_text(from_label_, "刷新中…");
+                lv_label_set_text(subject_label_, "");
+                lv_label_set_text(body_label_, "");
+            } else {
+                lv_label_set_text(body_label_, "刷新中…");
+            }
             break;
         default:
             break;
@@ -135,8 +158,10 @@ void MailApp::Enter() {
         lv_obj_clear_flag(root_, LV_OBJ_FLAG_HIDDEN);
         lv_obj_move_foreground(root_);
         active_ = true;
+        seen_version_ = MailStatus::Get().Version();
         Reload();
         Render();
+        if (sync_timer_ != nullptr) lv_timer_resume(sync_timer_);
         lvgl_port_unlock();
     }
 }
@@ -144,6 +169,7 @@ void MailApp::Enter() {
 void MailApp::Leave() {
     if (lvgl_port_lock(pdMS_TO_TICKS(1000))) {
         active_ = false;
+        if (sync_timer_ != nullptr) lv_timer_pause(sync_timer_);
         lv_obj_add_flag(root_, LV_OBJ_FLAG_HIDDEN);
         lvgl_port_unlock();
     }
@@ -155,6 +181,10 @@ void MailApp::Destroy() {
         if (root_ != nullptr) {
             lv_obj_delete(root_);
             root_ = nullptr;
+        }
+        if (sync_timer_ != nullptr) {
+            lv_timer_delete(sync_timer_);   // 定时器独立于对象生命周期,必须显式删除
+            sync_timer_ = nullptr;
         }
         lvgl_port_unlock();
     }
