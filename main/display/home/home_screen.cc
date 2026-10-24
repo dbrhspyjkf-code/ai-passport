@@ -26,6 +26,7 @@
 #include "tetris_app.h"
 #include "flappy_app.h"
 #include "radio_app.h"
+#include "media_app.h"
 #include "games_app.h"
 #include "answer_app.h"
 #include "player_app.h"
@@ -357,8 +358,10 @@ void HomeScreen::LauncherHighlight() {
 }
 
 void HomeScreen::SwitchApp(int idx) {
-    // APP 索引:0-4=金融/邮件/答案/播放/计时,5=娱乐文件夹,6=方块,7=Flappy,8=收音机,9=AI新闻
-    // (6-8 不在启动栏,由 GamesApp 进入;9=启动栏第 7 格;current_app_ 记真实占用者)
+    // APP 索引:0=金融 1=邮件 2=答案 3=播放器(Sonos/HomePod) 4=计时,
+    // 5=娱乐文件夹,6=方块,7=Flappy,8=收音机,9=AI新闻,10=播放文件夹
+    // (3/8 由播放文件夹进入;6/7 由娱乐文件夹进入;10=启动栏第 4 格;
+    //  9=启动栏第 7 格;current_app_ 记真实占用者)
     // 已退出(Leave 后 active_=false)的同一 APP 允许重新进入
     if (idx == current_app_) {
         bool alive = false;
@@ -372,6 +375,7 @@ void HomeScreen::SwitchApp(int idx) {
             case 6: alive = TetrisApp::Get().Active(); break;
             case 7: alive = FlappyApp::Get().Active(); break;
             case 8: alive = RadioApp::Get().Active(); break;
+            case 10: alive = MediaApp::Get().Active(); break;
             case 9: alive = NewsApp::Get().Active(); break;
             default: break;
         }
@@ -391,6 +395,7 @@ void HomeScreen::SwitchApp(int idx) {
                 case 7: FlappyApp::Get().Destroy(); break;
                 case 8: RadioApp::Get().Destroy(); break;
                 case 9: NewsApp::Get().Destroy(); break;
+                case 10: MediaApp::Get().Destroy(); break;
                 default: break;
             }
             lvgl_port_unlock();
@@ -426,6 +431,9 @@ void HomeScreen::SwitchApp(int idx) {
     } else if (idx == 9) {
         NewsApp::Get().Create(parent);
         NewsApp::Get().Enter();
+    } else if (idx == 10) {
+        MediaApp::Get().Create(parent);
+        MediaApp::Get().Enter();
     } else {
         RadioApp::Get().Create(parent);
         RadioApp::Get().Enter();
@@ -449,6 +457,7 @@ bool HomeScreen::ExitCurrentApp() {
             case 7: FlappyApp::Get().Destroy(); break;
             case 8: RadioApp::Get().Destroy(); break;
             case 9: NewsApp::Get().Destroy(); break;
+            case 10: MediaApp::Get().Destroy(); break;
             default: break;
         }
         lvgl_port_unlock();
@@ -469,9 +478,11 @@ bool HomeScreen::HandleLauncherKey(int key) {
             LauncherHighlight();
             return true;
         case 2:   // OK:进入选中 APP(切换时销毁上一个,同时最多 1 个 APP 对象)
-            // 启动栏槽位 → APP 索引:0-5 恰好同名;第 7 格(新闻)=APP 9
-            // (6-8 是方块/Flappy/收音机,由娱乐文件夹进入,不在启动栏)
-            SwitchApp(launcher_sel_ == 6 ? 9 : launcher_sel_);
+            // 启动栏槽位 → APP 索引:第 4 格"播放"=播放文件夹(APP 10),
+            // 第 7 格(新闻)=APP 9;其余槽位同名直进
+            // (播放器 3/收音机 8 由播放文件夹进入;方块/Flappy 由娱乐文件夹进入)
+            SwitchApp(launcher_sel_ == 3 ? 10 :
+                      launcher_sel_ == 6 ? 9 : launcher_sel_);
             return true;
         default:
             return false;

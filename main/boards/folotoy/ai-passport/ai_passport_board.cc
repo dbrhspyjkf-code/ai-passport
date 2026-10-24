@@ -12,6 +12,7 @@
 #include "display/home/flappy_app.h"
 #include "display/home/radio_app.h"
 #include "display/home/games_app.h"
+#include "display/home/media_app.h"
 #include "display/home/answer_app.h"
 #include "display/home/player_app.h"
 #include "display/home/timer_app.h"
@@ -189,6 +190,14 @@ private:
                     }
                     return;
                 }
+                auto& mediaU = MediaApp::Get();
+                if (mediaU.Active()) {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        mediaU.HandleKey(0);   // 播放文件夹:上一项
+                        lvgl_port_unlock();
+                    }
+                    return;
+                }
                 auto& player = PlayerApp::Get();
                 if (player.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
@@ -296,6 +305,14 @@ private:
                 if (radioD.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
                         radioD.HandleKey(1);   // 收音机:短按 DOWN=音量-
+                        lvgl_port_unlock();
+                    }
+                    return;
+                }
+                auto& mediaD = MediaApp::Get();
+                if (mediaD.Active()) {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        mediaD.HandleKey(1);   // 播放文件夹:下一项
                         lvgl_port_unlock();
                     }
                     return;
@@ -442,6 +459,14 @@ private:
                 if (radioOk.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
                         radioOk.HandleKey(2);   // 收音机:播放/停止
+                        lvgl_port_unlock();
+                    }
+                    return;
+                }
+                auto& mediaOK = MediaApp::Get();
+                if (mediaOK.Active()) {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        mediaOK.HandleKey(2);   // 播放文件夹:进入选中
                         lvgl_port_unlock();
                     }
                     return;

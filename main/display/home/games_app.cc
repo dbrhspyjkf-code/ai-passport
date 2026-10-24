@@ -1,4 +1,4 @@
-// games_app.cc —— 娱乐文件夹选择屏实现(方块/Flappy/收音机)。
+// games_app.cc —— 娱乐文件夹选择屏实现(方块/Flappy)。
 #include "games_app.h"
 
 LV_FONT_DECLARE(font_home_cn_16);
@@ -53,8 +53,8 @@ void GamesApp::Create(lv_obj_t* parent) {
     lv_label_set_text(title, "娱乐");
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 24);
 
-    // 三个条目行(图标左,名称+最高分右)
-    static const char* kNames[kGameCount] = {"俄罗斯方块", "FLAPPY BIRD", "收音机"};
+    // 两个条目行(图标左,名称+最高分右);屏 240×320,两行垂直居中偏上
+    static const char* kNames[kGameCount] = {"俄罗斯方块", "FLAPPY BIRD"};
     for (int i = 0; i < kGameCount; i++) {
         lv_obj_t* row = lv_obj_create(root_);
         lv_obj_set_size(row, 208, 60);
@@ -65,7 +65,7 @@ void GamesApp::Create(lv_obj_t* parent) {
         lv_obj_set_style_pad_all(row, 0, 0);
         lv_obj_set_scrollbar_mode(row, LV_SCROLLBAR_MODE_OFF);
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_align(row, LV_ALIGN_TOP_MID, 0, 64 + i * 72);
+        lv_obj_align(row, LV_ALIGN_TOP_MID, 0, 104 + i * 80);
         rows_[i] = row;
 
         lv_obj_t* name = lv_label_create(row);
@@ -97,15 +97,6 @@ void GamesApp::Create(lv_obj_t* parent) {
     lv_obj_set_pos(beak, 40, 29);
     lv_obj_t* eye = mk_rect(rows_[1], 4, 4, 0x0a1f14);
     lv_obj_set_pos(eye, 34, 26);
-    // 行图标 2:收音机(机身+天线+喇叭点阵)
-    lv_obj_t* rbody = mk_rect(rows_[2], 30, 20, 0xb7f5c4, 3);
-    lv_obj_set_pos(rbody, 12, 30);
-    lv_obj_t* rant = mk_rect(rows_[2], 2, 12, 0x4f7a5e);
-    lv_obj_set_pos(rant, 38, 18);
-    lv_obj_t* rspk = mk_rect(rows_[2], 10, 10, 0x081710, 5);
-    lv_obj_set_pos(rspk, 17, 35);
-    lv_obj_t* rdot = mk_rect(rows_[2], 4, 4, 0xf5a263, 2);
-    lv_obj_set_pos(rdot, 33, 33);
 
     // 底部按键提示
     lv_obj_t* hint = lv_label_create(root_);
@@ -123,7 +114,6 @@ void GamesApp::RefreshScores() {
     lv_label_set_text_fmt(score_labels_[0], "最高 %d", hi);
     {   Settings st("flappy", false); hi = st.GetInt("highscore", 0); }
     lv_label_set_text_fmt(score_labels_[1], "最高 %d", hi);
-    lv_label_set_text(score_labels_[2], "网络电台");
 }
 
 void GamesApp::Highlight() {

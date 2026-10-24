@@ -47,6 +47,7 @@ set(SOURCES "audio/audio_codec.cc"
             "display/home/flappy_app.cc"
             "display/home/radio_app.cc"
             "display/home/games_app.cc"
+            "display/home/media_app.cc"
             "display/home/answer_app.cc"
             "display/home/player_app.cc"
             # "display/home/sonos_app.cc" (merged into player_app)
