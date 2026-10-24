@@ -44,17 +44,26 @@ private:
 
     // UI
     lv_obj_t* root_ = nullptr;
-    lv_obj_t* cells_layer_ = nullptr;   // 动态格子层(每帧重建)
+    lv_obj_t* cells_layer_ = nullptr;   // 动态格子层(池化,见 cell_pool_)
     lv_obj_t* board_canvas_ = nullptr;    // 网格绘制区
     lv_obj_t* high_label_ = nullptr;   // 最高分
     lv_obj_t* score_label_ = nullptr;
     lv_obj_t* lines_label_ = nullptr;
     lv_obj_t* level_label_ = nullptr;
     lv_obj_t* next_canvas_ = nullptr;     // 下一块预览
+    lv_obj_t* next_pool_[4] = {};         // 预览格池(4 格,免建删)
     lv_obj_t* overlay_label_ = nullptr;   // 暂停/结束提示
     lv_timer_t* tick_timer_ = nullptr;
     bool active_ = false;
     uint32_t tick_count_ = 0;
+
+    // 行段池:DrawBoard 把每行"连续同色格子"合并为一条矩形,
+    // 满盘典型 40-80 段(一格一对象的旧画法满盘 ~280 对象 ≈24KB,
+    // 把 free 压到 7K,是 DNS 掉线/bad_alloc 重启的总根因)。
+    // 惰性创建+复用,零运行期建删;段数超池上限时丢弃多余段(仅影响画面)。
+    static const int kPoolSize = 128;
+    lv_obj_t* cell_pool_[kPoolSize] = {};
+    lv_obj_t* PoolGet(int idx);
 
     void ResetGame();
     void SpawnPiece();
