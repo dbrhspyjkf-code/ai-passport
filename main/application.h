@@ -128,6 +128,25 @@ public:
      */
     void ResetProtocol();
 
+    /**
+     * TLS 重连软木塞:MQTT 健康时持有 11K 连续块(碎片化免疫的
+     * "备用洞");检测到 MQTT 掉线瞬间释放,TLS 握手的 2×4.7K 缓冲
+     * 落进洞内,重连成功后重新持有。根治碎片化堆上 MQTT 掉线无法
+     * 自愈的不治之症(2026-10-18 记录,10-24 实装)。
+     */
+    void UpdateTlsCork();
+    // 收音机等大流量外部播放期间调用:临时释放软木塞给 TCP pbuf/
+    // HTTP 缓冲让路(收音机走局域网明文 HTTP 不需要 TLS 塞);
+    // 退出后 UpdateTlsCork 的每分钟重试自动重新持有。
+    void ReleaseTlsCork();
+
+    /**
+     * Recreate protocol after ResetProtocol (thread-safe, deferred to main task).
+     * Connection is NOT re-established eagerly; it connects on demand (e.g. chat).
+     * Used by memory-hungry apps (radio) that tear MQTT/TLS down while running.
+     */
+    void ReinitProtocolForRadio();
+
 private:
     Application();
     ~Application();
@@ -135,6 +154,7 @@ private:
     std::mutex mutex_;
     std::deque<std::function<void()>> main_tasks_;
     std::unique_ptr<Protocol> protocol_;
+    uint8_t* tls_cork_ = nullptr;   // TLS 重连软木塞(见 UpdateTlsCork)
     EventGroupHandle_t event_group_ = nullptr;
     esp_timer_handle_t clock_timer_handle_ = nullptr;
     DeviceStateMachine state_machine_;

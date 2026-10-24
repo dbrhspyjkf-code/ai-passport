@@ -35,6 +35,8 @@ public:
     virtual void EnableOutput(bool enable);
 
     virtual void OutputData(std::vector<int16_t>& data);
+    // 裸指针重载:内存受限场景(收音机等)用静态数组直写,零堆依赖
+    virtual void OutputData(const int16_t* data, size_t samples);
     virtual bool InputData(std::vector<int16_t>& data);
     virtual void Start();
 

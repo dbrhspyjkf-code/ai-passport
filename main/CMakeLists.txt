@@ -42,6 +42,9 @@ set(SOURCES "audio/audio_codec.cc"
             "display/home/mail_app.cc"
             "display/home/finance_app.cc"
             "display/home/tetris_app.cc"
+            "display/home/flappy_app.cc"
+            "display/home/radio_app.cc"
+            "display/home/games_app.cc"
             "display/home/answer_app.cc"
             "display/home/player_app.cc"
             # "display/home/sonos_app.cc" (merged into player_app)
@@ -268,7 +271,7 @@ if(NOT LANG_DIR STREQUAL "en-US")
     endforeach()
 endif()
 
-file(GLOB COMMON_SOUNDS ${CMAKE_CURRENT_SOURCE_DIR}/assets/common/*.ogg)
+file(GLOB COMMON_SOUNDS ${CMAKE_CURRENT_SOURCE_DIR}/assets/common/*.ogg ${CMAKE_CURRENT_SOURCE_DIR}/assets/common/*.mp3)
 
 # If target chip is ESP32, exclude specific files to avoid build errors
 if(CONFIG_IDF_TARGET_ESP32)

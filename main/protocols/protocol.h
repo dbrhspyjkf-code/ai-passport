@@ -66,6 +66,8 @@ public:
     virtual void SendStopListening();
     virtual void SendAbortSpeaking(AbortReason reason);
     virtual void SendMcpMessage(const std::string& message);
+    // 传输层连接状态(MQTT 重连看门狗/TLS 软木塞用;默认视为已连接)
+    virtual bool IsConnected() const { return true; }
 
 protected:
     std::function<void(const cJSON* root)> on_incoming_json_;

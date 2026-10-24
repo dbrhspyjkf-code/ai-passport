@@ -544,3 +544,7 @@ bool MqttProtocol::IsAudioChannelOpened() const {
     std::lock_guard<std::mutex> lock(channel_mutex_);
     return udp_ != nullptr && !error_occurred_ && !IsTimeout();
 }
+
+bool MqttProtocol::IsConnected() const {
+    return mqtt_ != nullptr && mqtt_->IsConnected();
+}

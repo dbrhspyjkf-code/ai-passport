@@ -119,6 +119,21 @@ public:
     void Initialize(AudioCodec* codec);
     void Start();
     void Stop();
+    // 收音机模式:释放可懒重建的大块解码/重采样上下文(Opus 解码器
+    // + 输入/输出重采样器)。下次语音/提示音路径按需自动重建
+    // (SetDecoderFormat/Start 均懒创建)。语音停用期间调用。
+    void ReleaseRadioMemory();
+    // 收音机等"直接写 codec 输出"的外部路径调用:刷新电源定时器的
+    // 输出活跃时间戳,防止 15s 无 AudioService 活动时定时器关掉
+    // codec 输出。替代曾经的 Stop()/Start() 方案——后者反复重建
+    // 音频任务(含麦克风输入),多次循环后输入路径状态错乱
+    // ("聆听中但收不到语音")+任务分配风暴 NO_MEM(2026-10-24)。
+    void NotifyExternalOutput() {
+        last_output_time_ = std::chrono::steady_clock::now();
+    }
+    // 收音机等内存大户退出时预热重建解码器(趁堆干净,在协议重连
+    // 抢占内存前;参数用服务器标准 24k/60ms,首包不同率会自动重建)
+    void PrecreateDecoder();
     void EncodeWakeWord();
     std::unique_ptr<AudioStreamPacket> PopWakeWordPacket();
     const std::string& GetLastWakeWord() const;

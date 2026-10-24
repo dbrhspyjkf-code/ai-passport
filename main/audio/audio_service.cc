@@ -1,6 +1,8 @@
 #include "audio_service.h"
 #include <esp_log.h>
 #include <cstring>
+#include "board.h"
+#include "display.h"
 
 #define RATE_CVT_CFG(_src_rate, _dest_rate, _channel)                                        \
     (esp_ae_rate_cvt_cfg_t) {                                                                \
@@ -168,6 +170,47 @@ void AudioService::Start() {
             vTaskDelete(NULL);
         },
         "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_);
+}
+
+void AudioService::ReleaseRadioMemory() {
+    // 收音机模式专用:释放可懒重建的解码/重采样大块(见头文件注释)。
+    // 调用前提:语音/提示音路径已停用(收音机 APP 独占)。
+    {
+        std::lock_guard<std::mutex> lock(decoder_mutex_);
+        if (opus_decoder_ != nullptr) {
+            esp_opus_dec_close(opus_decoder_);
+            opus_decoder_ = nullptr;
+        }
+        // 必须同步清缓存值:否则 SetDecodeSampleRate 见"采样率未变"
+        // 直接 return,解码器永不重建 → 退出收音机后小智语音无声
+        // (2026-10-24 "Audio decoder is not configured" 实锤)
+        decoder_sample_rate_ = 0;
+        decoder_duration_ms_ = 0;
+        decoder_frame_size_ = 0;
+    }
+    {
+        std::lock_guard<std::mutex> lock(input_resampler_mutex_);
+        if (input_resampler_ != nullptr) {
+            esp_ae_rate_cvt_close(input_resampler_);
+            input_resampler_ = nullptr;
+        }
+    }
+    if (output_resampler_ != nullptr) {
+        esp_ae_rate_cvt_close(output_resampler_);
+        output_resampler_ = nullptr;
+    }
+    ESP_LOGI(TAG, "radio memory released (opus dec + resamplers)");
+}
+
+void AudioService::PrecreateDecoder() {
+    // 收音机退出路径专用:趁堆最干净时重建解码器+输出重采样器。
+    // 若等首包再建,MQTT TLS 已抢占堆,碎片化下 opus open 必 -7
+    // (2026-10-24 连续实锤)。先清字形缓存再造。
+    if (opus_decoder_ != nullptr) return;
+    Board::GetInstance().GetDisplay()->ReleaseCachesForMemory();
+    SetDecodeSampleRate(24000, 60);
+    ESP_LOGI(TAG, "decoder precreated: %s",
+             opus_decoder_ != nullptr ? "ok" : "FAILED");
 }
 
 void AudioService::Stop() {
@@ -541,6 +584,12 @@ void AudioService::SetDecodeSampleRate(int sample_rate, int frame_duration) {
     decoder_lock.unlock();
     esp_opus_dec_cfg_t opus_dec_cfg = OPUS_DEC_CFG(sample_rate, frame_duration);
     auto ret = esp_opus_dec_open(&opus_dec_cfg, sizeof(esp_opus_dec_cfg_t), &opus_decoder_);
+    if (opus_decoder_ == nullptr) {
+        // 内存不足(碎片化):清可再生的字形缓存后重试一次
+        // (收音机退出后 MQTT 重连抢占堆的典型场景,2026-10-24)
+        Board::GetInstance().GetDisplay()->ReleaseCachesForMemory();
+        ret = esp_opus_dec_open(&opus_dec_cfg, sizeof(esp_opus_dec_cfg_t), &opus_decoder_);
+    }
     if (opus_decoder_ == nullptr) {
         ESP_LOGE(TAG, "Failed to create audio decoder, error code: %d", ret);
         return;

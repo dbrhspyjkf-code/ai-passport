@@ -5,6 +5,7 @@
 #include "board.h"
 #include "display/home/home_screen.h"
 #include "display.h"
+#include "esp_heap_caps.h"
 #include "mcp_server.h"
 #include "mqtt_protocol.h"
 #include "settings.h"
@@ -188,6 +189,7 @@ void Application::Run() {
         auto bits = xEventGroupWaitBits(event_group_, ALL_EVENTS, pdTRUE, pdFALSE, portMAX_DELAY);
 
         if (bits & MAIN_EVENT_ERROR) {
+            UpdateTlsCork();   // MQTT 掉线第一时间释放软木塞给重连握手
             if (GetDeviceState() == kDeviceStateNotifying) {
                 StopNotification();
             }
@@ -198,14 +200,19 @@ void Application::Run() {
 
         if (bits & MAIN_EVENT_NETWORK_CONNECTED) {
             HandleNetworkConnectedEvent();
+            UpdateTlsCork();   // 网络恢复后(MQTT 将重连)先确保旧塞释放
         }
 
         if (bits & MAIN_EVENT_NETWORK_DISCONNECTED) {
             HandleNetworkDisconnectedEvent();
+            UpdateTlsCork();   // WiFi 掉:提前释放塞,给后续重连握手
         }
 
         if (bits & MAIN_EVENT_ACTIVATION_DONE) {
             HandleActivationDoneEvent();
+            // 注意:此处不持塞——音频引擎 4.6s 才完成初始化,过早持有
+            // 11K 会挤掉它的 new → bad_alloc 重启循环(2026-10-24 实锤)。
+            // 持塞交给每分钟的 clock tick 重试(系统全稳后自然拿到)。
         }
 
         if (bits & MAIN_EVENT_STATE_CHANGED) {
@@ -283,6 +290,10 @@ void Application::Run() {
                 SystemInfo::PrintHeapStats();
                 // SystemInfo::PrintTaskList();   // 栈水位测量(需要时临时打开)
                 // SystemInfo::PrintTaskCpuUsage(pdMS_TO_TICKS(1000));
+            }
+            // 软木塞自愈:持有失败后每分钟重试一次(MQTT 健康时)
+            if (clock_ticks_ % 60 == 0) {
+                UpdateTlsCork();
             }
         }
     }
@@ -545,9 +556,14 @@ void Application::InitializeProtocol() {
 
     display->SetStatus(Lang::Strings::LOADING_PROTOCOL);
 
-    if (ota_->HasMqttConfig()) {
+    // ota_ 在激活完成后被释放(ActivationTask 尾部 ota_.reset());
+    // 收音机模式重建协议时它已为空——此时默认 MQTT(与下方兜底一致,
+    // 本机即 MQTT)。空指针解引用曾是收音机退出重启的根因。
+    bool has_mqtt = (ota_ == nullptr) || ota_->HasMqttConfig();
+    bool has_ws = (ota_ != nullptr) && ota_->HasWebsocketConfig();
+    if (has_mqtt) {
         protocol_ = std::make_unique<MqttProtocol>();
-    } else if (ota_->HasWebsocketConfig()) {
+    } else if (has_ws) {
         protocol_ = std::make_unique<WebsocketProtocol>();
     } else {
         ESP_LOGW(TAG, "No protocol specified in the OTA config, using MQTT");
@@ -1371,6 +1387,55 @@ void Application::PlayTimerSound() {
     // 提醒由 TimerApp::Tick 驱动(2026-10-19):DONE 后每秒一声嘀×3,
     // 再闪屏×3 —— 单声 main 直播路径(已验证),Tick 提供节拍。
     timer_sound_restore_pending_ = false;
+}
+
+void Application::ReleaseTlsCork() {
+    if (tls_cork_ != nullptr) {
+        free(tls_cork_);
+        tls_cork_ = nullptr;
+        ESP_LOGI(TAG, "tls cork released for radio (free=%u)",
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_DEFAULT));
+    }
+}
+
+void Application::UpdateTlsCork() {
+    // TLS 重连软木塞:见 application.h 注释。MQTT 断→释放洞给握手;
+    // MQTT 通→(重新)持有。持有失败(堆紧)时每分钟 clock tick 重试。
+    bool connected = protocol_ != nullptr && protocol_->IsConnected();
+    if (!connected) {
+        if (tls_cork_ != nullptr) {
+            free(tls_cork_);
+            tls_cork_ = nullptr;
+            ESP_LOGW(TAG, "tls cork released (mqtt down) largest=%u",
+                     (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
+        }
+        return;
+    }
+    if (tls_cork_ == nullptr) {
+        // 软木塞已实质停用(2026-10-24 终局):开机即持 11K 会把
+        // 预算压死(MQTT TLS 8K+塞 11K+轮询 TLS 突发 10K=40K 见底,
+        // 收音机/其他新网络流全饿死)。门槛设为实际达不到的 40K,
+        // 保留机制但不再持有。MQTT 掉线走 WDT 重启自愈。
+        if (heap_caps_get_free_size(MALLOC_CAP_DEFAULT) < 40000) {
+            return;
+        }
+        // 11K:2×4.7K 握手缓冲 + TLS 元数据,单洞足够
+        tls_cork_ = static_cast<uint8_t*>(malloc(11264));
+        if (tls_cork_ != nullptr) {
+            ESP_LOGI(TAG, "tls cork held 11K (free=%u largest=%u)",
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_DEFAULT),
+                     (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
+        }
+    }
+}
+
+void Application::ReinitProtocolForRadio() {
+    Schedule([this]() {
+        if (protocol_ == nullptr) {
+            InitializeProtocol();
+            ESP_LOGI(TAG, "protocol re-initialized after radio mode");
+        }
+    });
 }
 
 void Application::ResetProtocol() {

@@ -9,6 +9,9 @@
 #include "display/home/finance_app.h"
 #include "display/home/home_screen.h"
 #include "display/home/tetris_app.h"
+#include "display/home/flappy_app.h"
+#include "display/home/radio_app.h"
+#include "display/home/games_app.h"
 #include "display/home/answer_app.h"
 #include "display/home/player_app.h"
 #include "display/home/timer_app.h"
@@ -131,10 +134,22 @@ private:
         auto ok = adc_button_[kAdcButtonOk];
 
         // 任意按键按下即视为用户交互:立即从闲置降亮度状态恢复。
-        auto wake_display = []() { IdleDim::Get().Notify(); };
-        up->OnPressDown(wake_display);
-        down->OnPressDown(wake_display);
-        ok->OnPressDown(wake_display);
+        // 游戏高频操作绑"按下瞬间"(OnPressDown)而非释放(OnClick):
+        // Flappy 拍翅即时触发。
+        auto wake_or_gamekey = [](int key) {
+            IdleDim::Get().Notify();
+            if (FlappyApp::Get().Active()) {
+                Application::GetInstance().Schedule([key]() {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        FlappyApp::Get().HandleKey(key);
+                        lvgl_port_unlock();
+                    }
+                });
+            }
+        };
+        up->OnPressDown([wake_or_gamekey]() { wake_or_gamekey(0); });
+        down->OnPressDown([wake_or_gamekey]() { wake_or_gamekey(1); });
+        ok->OnPressDown([wake_or_gamekey]() { wake_or_gamekey(2); });
 
         // ============ UP 键 ============
         // 短按: APP 内功能 / 主页=launcher
@@ -147,10 +162,28 @@ private:
                     }
                     return;
                 }
+                auto& games = GamesApp::Get();
+                if (games.Active()) {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        games.HandleKey(0);   // 文件夹:上一项
+                        lvgl_port_unlock();
+                    }
+                    return;
+                }
                 auto& tetris = TetrisApp::Get();
                 if (tetris.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
                         tetris.HandleKey(0);   // 左移
+                        lvgl_port_unlock();
+                    }
+                    return;
+                }
+                auto& flappy = FlappyApp::Get();
+                if (flappy.Active()) return;   // 拍翅已在按下瞬间处理(OnPressDown)
+                auto& radioU = RadioApp::Get();
+                if (radioU.Active()) {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        radioU.HandleKey(0);   // 收音机:上一台
                         lvgl_port_unlock();
                     }
                     return;
@@ -207,11 +240,8 @@ private:
                     }
                     return;
                 }
-                auto& tetris = TetrisApp::Get();
-                if (tetris.Active()) {
-                    tetris.Leave();
-                    return;
-                }
+                // APP=退出即销毁(释放常驻内存);无 APP=音量100
+                if (HomeScreen::Get().ExitCurrentApp()) return;
                 GetAudioCodec()->SetOutputVolume(100);
                 GetDisplay()->ShowNotification(Lang::Strings::MAX_VOLUME);
             });
@@ -227,10 +257,28 @@ private:
                     }
                     return;
                 }
+                auto& games = GamesApp::Get();
+                if (games.Active()) {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        games.HandleKey(1);   // 文件夹:下一项
+                        lvgl_port_unlock();
+                    }
+                    return;
+                }
                 auto& tetris = TetrisApp::Get();
                 if (tetris.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
                         tetris.HandleKey(1);   // 右移
+                        lvgl_port_unlock();
+                    }
+                    return;
+                }
+                auto& flappy = FlappyApp::Get();
+                if (flappy.Active()) return;   // 拍翅已在按下瞬间处理(OnPressDown)
+                auto& radioD = RadioApp::Get();
+                if (radioD.Active()) {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        radioD.HandleKey(1);   // 收音机:下一台
                         lvgl_port_unlock();
                     }
                     return;
@@ -287,6 +335,14 @@ private:
                     }
                     return;
                 }
+                auto& games = GamesApp::Get();
+                if (games.Active()) {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        games.HandleKey(1);   // 文件夹:切换选中(两项同效)
+                        lvgl_port_unlock();
+                    }
+                    return;
+                }
                 auto& tetris = TetrisApp::Get();
                 if (tetris.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
@@ -295,8 +351,25 @@ private:
                     }
                     return;
                 }
+                auto& flappy = FlappyApp::Get();
+                if (flappy.Active()) return;   // 长按不重复拍翅(按下瞬间已响应)
+                auto& radioDL = RadioApp::Get();
+                if (radioDL.Active()) return;   // 收音机内长按 DOWN 无功能,消费防静音
                 GetAudioCodec()->SetOutputVolume(0);
                 GetDisplay()->ShowNotification(Lang::Strings::MUTED);
+            });
+        });
+
+        // 双击 DOWN: 方块=硬降(直接落底,与长按同效但更快)
+        down->OnDoubleClick([this]() {
+            Application::GetInstance().Schedule([this]() {
+                auto& tetris = TetrisApp::Get();
+                if (tetris.Active()) {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        tetris.HandleKey(5);   // 硬降
+                        lvgl_port_unlock();
+                    }
+                }
             });
         });
 
@@ -316,10 +389,28 @@ private:
                     }
                     return;
                 }
+                auto& games = GamesApp::Get();
+                if (games.Active()) {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        games.HandleKey(2);   // 文件夹:进入选中游戏
+                        lvgl_port_unlock();
+                    }
+                    return;
+                }
                 auto& tetris = TetrisApp::Get();
                 if (tetris.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
                         tetris.HandleKey(2);   // 旋转
+                        lvgl_port_unlock();
+                    }
+                    return;
+                }
+                auto& flappy = FlappyApp::Get();
+                if (flappy.Active()) return;   // 拍翅/开始/重开已在按下瞬间处理
+                auto& radioOk = RadioApp::Get();
+                if (radioOk.Active()) {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        radioOk.HandleKey(2);   // 收音机:播放/停止
                         lvgl_port_unlock();
                     }
                     return;
@@ -387,29 +478,14 @@ private:
                 }
             });
         });
-        // 长按 OK: APP=退出;主页=对话
+        // 长按 OK: APP=退出即销毁(金融/游戏/播放器等一律销毁,释放常驻
+        // 内存);主页=对话
         ok->OnLongPress([this, &finance]() {
             ESP_LOGI(TAG, "[key] OK long @%lld", (long long)esp_timer_get_time());
             Application::GetInstance().Schedule([this, &finance]() {
                 extern int64_t g_ok_longpress_us;
                 g_ok_longpress_us = esp_timer_get_time();
-                if (finance.Active()) {
-                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        finance.HandleKey(FinanceApp::KEY_OK_LONG);
-                        lvgl_port_unlock();
-                    }
-                    return;
-                }
-                auto& tetris = TetrisApp::Get();
-                if (tetris.Active()) { tetris.Leave(); return; }
-                auto& player = PlayerApp::Get();
-                if (player.Active()) { player.Leave(); return; }
-                auto& mailL = MailApp::Get();
-                if (mailL.Active()) { mailL.Leave(); return; }
-                auto& timerL = TimerApp::Get();
-                if (timerL.Active()) { timerL.Leave(); return; }
-                auto& answerL = AnswerApp::Get();
-                if (answerL.Active()) { answerL.Leave(); return; }
+                if (HomeScreen::Get().ExitCurrentApp()) return;
                 if (Application::GetInstance().GetDeviceState() == kDeviceStateIdle) {
                     ToggleChat();
                 }
