@@ -8,7 +8,7 @@
 #   ssh 后: nohup python3 radio_relay.py > radio_relay.log 2>&1 &
 #   (需要服务器装有 ffmpeg;境外台自动走本机 xray 代理拉流)
 #
-# 验证: curl -m 5 http://192.168.1.200:8767/radio/fip -o /dev/null 应有数据
+# 验证: curl -m 5 http://192.168.1.200:8769/radio/szjt -o /dev/null 应有数据
 import http.server
 import socketserver
 import subprocess

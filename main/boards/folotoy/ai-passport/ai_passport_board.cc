@@ -184,7 +184,7 @@ private:
                 auto& radioU = RadioApp::Get();
                 if (radioU.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        radioU.HandleKey(0);   // 收音机:上一台
+                        radioU.HandleKey(0);   // 收音机:短按 UP=音量+
                         lvgl_port_unlock();
                     }
                     return;
@@ -231,7 +231,7 @@ private:
                 ChangeVolume(10);
             });
         });
-        // 长按 UP: 播放器=上一曲;金融=切tab;主页=音量100
+        // 长按 UP: 播放器=上一曲;金融=切tab;收音机=上一台;其他APP=退出;主页=音量100
         up->OnLongPress([this, &finance]() {
             Application::GetInstance().Schedule([this, &finance]() {
                 auto& player = PlayerApp::Get();
@@ -245,6 +245,14 @@ private:
                 if (finance.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
                         finance.HandleKey(FinanceApp::KEY_UP_LONG);
+                        lvgl_port_unlock();
+                    }
+                    return;
+                }
+                auto& radioUL = RadioApp::Get();
+                if (radioUL.Active()) {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        radioUL.HandleKey(3);   // 收音机:长按 UP=上一台(退出用长按 OK)
                         lvgl_port_unlock();
                     }
                     return;
@@ -287,7 +295,7 @@ private:
                 auto& radioD = RadioApp::Get();
                 if (radioD.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        radioD.HandleKey(1);   // 收音机:下一台
+                        radioD.HandleKey(1);   // 收音机:短按 DOWN=音量-
                         lvgl_port_unlock();
                     }
                     return;
@@ -334,7 +342,7 @@ private:
                 ChangeVolume(-10);
             });
         });
-        // 长按 DOWN: 播放器=下一曲;金融=切tab;方块=硬降;主页=静音
+        // 长按 DOWN: 播放器=下一曲;金融=切tab;方块=硬降;收音机=下一台;主页=静音
         down->OnLongPress([this, &finance]() {
             Application::GetInstance().Schedule([this, &finance]() {
                 auto& player = PlayerApp::Get();
@@ -371,7 +379,13 @@ private:
                 auto& flappy = FlappyApp::Get();
                 if (flappy.Active()) return;   // 长按不重复拍翅(按下瞬间已响应)
                 auto& radioDL = RadioApp::Get();
-                if (radioDL.Active()) return;   // 收音机内长按 DOWN 无功能,消费防静音
+                if (radioDL.Active()) {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        radioDL.HandleKey(4);   // 收音机:长按 DOWN=下一台
+                        lvgl_port_unlock();
+                    }
+                    return;
+                }
                 GetAudioCodec()->SetOutputVolume(0);
                 GetDisplay()->ShowNotification(Lang::Strings::MUTED);
             });
