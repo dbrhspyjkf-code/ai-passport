@@ -53,6 +53,12 @@ static const RadioStation kStations[] = {
     {"央广经济之声", "http://192.168.1.200:8769/radio/jjzs", 0},
     {"广东音乐之声", "http://192.168.1.200:8769/radio/gdyy", 993},
     {"羊城交通广播", "http://192.168.1.200:8769/radio/gdyz", 1052},
+    {"广东新闻FM91.4", "http://192.168.1.200:8769/radio/gdxw", 914},
+    {"珠江经济FM97.4", "http://192.168.1.200:8769/radio/zjjs", 974},
+    {"BBC World Service", "http://192.168.1.200:8769/radio/bbcws", 0},
+    {"NPR News", "http://192.168.1.200:8769/radio/npr", 0},
+    {"KEXP 独立音乐", "http://192.168.1.200:8769/radio/kexp", 0},
+    {"Radio Paradise", "http://192.168.1.200:8769/radio/rp", 0},
 };
 static const int kStationCount = sizeof(kStations) / sizeof(kStations[0]);
 
@@ -443,7 +449,7 @@ static void dial_draw_cb(lv_event_t* e) {
 // 竖向布局(屏 240×320):顶部文字三行 → 居中大图标 → 音量条 → 状态 →
 // 分隔线 → 两行提示。底部元素按屏高定位,避免再把 320 当 240 排版。
 static inline int ScreenH() { return LV_VER_RES; }
-static const int kTitleY = 14, kFreqY = 48, kNameY = 78;
+static const int kTitleY = 14, kNameY = 78;
 static inline int VolY() { return ScreenH() - 102; }       // 音量条
 static inline int StatusY() { return ScreenH() - 84; }     // 状态行
 static inline int DividerY() { return ScreenH() - 56; }    // 分隔线
@@ -510,13 +516,11 @@ static void st_show(lv_obj_t** labels, int idx, lv_obj_t** cur) {
 
 void RadioApp::ApplyStation(int idx, bool animate) {
     if (root_ == nullptr || idx < 0 || idx >= kStationCount) return;
-    // 台名/频率:预创建 label 显隐切换(零字形渲染)
+    // 台名(含频点):预创建 label 显隐切换(零字形渲染)
     for (int i = 0; i < kStationCount; i++) {
         if (name_labels_[i] != nullptr) {
             (i == idx) ? lv_obj_clear_flag(name_labels_[i], LV_OBJ_FLAG_HIDDEN)
                        : lv_obj_add_flag(name_labels_[i], LV_OBJ_FLAG_HIDDEN);
-            (i == idx) ? lv_obj_clear_flag(freq_labels_[i], LV_OBJ_FLAG_HIDDEN)
-                       : lv_obj_add_flag(freq_labels_[i], LV_OBJ_FLAG_HIDDEN);
         }
     }
     int target = NeedleX(FreqOf(idx));
@@ -578,21 +582,21 @@ void RadioApp::Create(lv_obj_t* parent) {
     // 频率读数用 cn 字体:pixel 字体只有 0-9/: 装不下 ".MHz";
     // 网络台无 FM 频点,读数不编造。频道号 "n / 8" 已放弃(多 8 个对象
     // 曾把碎片化的堆压爆→panic)。
+    // 每台一个 label:"频点 · 台名"(网络台"网络 · 台名")。曾拆名称/频率
+    // 两行×N 台,14 台时 28 个 label 把播放期堆压到 2.5K(largest 576B)
+    // → WDT,合并后对齐内存预算。
     for (int i = 0; i < kStationCount; i++) {
         name_labels_[i] = mk_label(root_, C_FG);
-        freq_labels_[i] = mk_label(root_, C_AMBER);
-        if (name_labels_[i] == nullptr || freq_labels_[i] == nullptr) break;
-        lv_label_set_text(name_labels_[i], kStations[i].name);
+        if (name_labels_[i] == nullptr) break;
+        if (kStations[i].freq != 0) {
+            lv_label_set_text_fmt(name_labels_[i], "%d.%d · %s",
+                                  kStations[i].freq / 10, kStations[i].freq % 10,
+                                  kStations[i].name);
+        } else {
+            lv_label_set_text_fmt(name_labels_[i], "网络 · %s", kStations[i].name);
+        }
         lv_obj_align(name_labels_[i], LV_ALIGN_TOP_MID, 0, kNameY);
         lv_obj_add_flag(name_labels_[i], LV_OBJ_FLAG_HIDDEN);
-        if (kStations[i].freq != 0) {
-            lv_label_set_text_fmt(freq_labels_[i], "%d.%d MHz",
-                                  kStations[i].freq / 10, kStations[i].freq % 10);
-        } else {
-            lv_label_set_text(freq_labels_[i], "网络电台");
-        }
-        lv_obj_align(freq_labels_[i], LV_ALIGN_TOP_MID, 0, kFreqY);
-        lv_obj_add_flag(freq_labels_[i], LV_OBJ_FLAG_HIDDEN);
     }
     if (s_ui_oom) { fail("station labels"); return; }
 
@@ -645,10 +649,59 @@ void RadioApp::Create(lv_obj_t* parent) {
     lv_obj_t* hint1 = mk_label(root_, C_DIM);
     lv_obj_t* hint2 = mk_label(root_, C_DIM);
     if (s_ui_oom || hint1 == nullptr || hint2 == nullptr) { fail("hint"); return; }
-    lv_label_set_text(hint1, "短按上下 音量 · 长按上下 换台");
+    lv_label_set_text(hint1, "短按 音量 · 长按 频道列表");
     lv_obj_align(hint1, LV_ALIGN_TOP_MID, 0, Hint1Y());
     lv_label_set_text(hint2, "OK 播放/暂停 · 长按 OK 返回");
     lv_obj_align(hint2, LV_ALIGN_TOP_MID, 0, Hint2Y());
+
+    // ---- 频道列表浮层(长按上/下弹出):滚动面板+预创建行+移动高亮条 ----
+    // 行高 22px 固定(行绝对定位,不依赖字体行距);列表 UI 创建失败时
+    // 长按上/下降级为直接顺序换台(见 HandleKey)。
+    list_panel_ = lv_obj_create(root_);
+    if (list_panel_ != nullptr) {
+        lv_obj_set_size(list_panel_, 232, 268);
+        lv_obj_set_style_bg_color(list_panel_, lv_color_hex(0x06120c), 0);
+        lv_obj_set_style_bg_opa(list_panel_, LV_OPA_90, 0);
+        lv_obj_set_style_border_color(list_panel_, lv_color_hex(C_HINT), 0);
+        lv_obj_set_style_border_width(list_panel_, 1, 0);
+        lv_obj_set_style_radius(list_panel_, 0, 0);
+        lv_obj_set_style_pad_all(list_panel_, 0, 0);
+        lv_obj_set_scrollbar_mode(list_panel_, LV_SCROLLBAR_MODE_AUTO);
+        lv_obj_add_flag(list_panel_, LV_OBJ_FLAG_SCROLLABLE);   // 需滚动
+        lv_obj_set_pos(list_panel_, 4, 26);
+        lv_obj_add_flag(list_panel_, LV_OBJ_FLAG_HIDDEN);
+
+        lv_obj_t* lt = mk_label(list_panel_, C_DIM);
+        if (lt != nullptr) {
+            lv_label_set_text(lt, "频道列表 · OK 播放 · 长按收起");
+            lv_obj_set_pos(lt, 10, 4);
+        }
+        // 单个多行 label 承载全部台名(行距补齐到 22px,指示条按行定位),
+        // 比 14 个行 label 省 ~1.7K;文本只在 Create 设置一次
+        const int lh = lv_font_get_line_height(&font_home_cn_16);
+        lv_obj_t* rows = mk_label(list_panel_, C_FG);
+        if (rows != nullptr) {
+            static char list_text[kMaxStations * 32 + 64];
+            int off = 0;
+            for (int i = 0; i < kStationCount; i++) {
+                off += snprintf(list_text + off, sizeof(list_text) - off,
+                                "%d %s\n", i + 1, kStations[i].name);
+            }
+            if (off > 0 && list_text[off - 1] == '\n') list_text[off - 1] = '\0';
+            lv_label_set_text(rows, list_text);
+            lv_obj_set_style_text_line_space(rows, kListRow - lh, 0);
+            lv_obj_set_pos(rows, 16, kListTop);
+        }
+        list_bar_ = mk_box(list_panel_, 6, kListTop, 4, lh, C_AMBER, 2);
+        if (s_ui_oom || rows == nullptr || list_bar_ == nullptr) {
+            // 列表建一半失败:整体放弃,保留"直接顺序换台"降级路径
+            lv_obj_delete(list_panel_);
+            list_panel_ = nullptr;
+            list_bar_ = nullptr;
+            s_ui_oom = false;
+            ESP_LOGW(TAG, "station list UI unavailable (OOM)");
+        }
+    }
 }
 
 void RadioApp::OnStreamState(int state) {
@@ -738,13 +791,44 @@ void RadioApp::StopPlay() {
     stop_req_.store(true);   // 任务 ≤1 次读超时内自退
 }
 
-void RadioApp::ChangeStation(int dir) {
-    // 换台:停旧流 + 350ms 防抖后等旧任务退出再启动(见 ScheduleStart)
-    sel_ = (sel_ + (dir < 0 ? kStationCount - 1 : 1)) % kStationCount;
-    ApplyStation(sel_, true);
+void RadioApp::PlayStation(int idx) {
+    // 选台播放:停旧流 + 350ms 防抖后等旧任务退出再启动(见 ScheduleStart)
+    sel_ = idx;
+    ApplyStation(sel_, false);
     st_show(st_labels_, 4, &status_label_);
     StopPlay();
     ScheduleStart(350);
+}
+
+void RadioApp::ChangeStation(int dir) {
+    PlayStation((sel_ + dir + kStationCount) % kStationCount);
+}
+
+void RadioApp::OpenStationList() {
+    if (list_panel_ == nullptr) return;   // UI 未建成(堆碎片):降级直接换台
+    list_sel_ = sel_;
+    UpdateListHighlight();
+    lv_obj_clear_flag(list_panel_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(list_panel_);
+    list_open_ = true;
+}
+
+void RadioApp::CloseStationList() {
+    if (list_panel_ != nullptr) {
+        lv_obj_add_flag(list_panel_, LV_OBJ_FLAG_HIDDEN);
+    }
+    list_open_ = false;
+}
+
+void RadioApp::MoveListSel(int d) {
+    list_sel_ = (list_sel_ + d + kStationCount) % kStationCount;
+    UpdateListHighlight();
+}
+
+void RadioApp::UpdateListHighlight() {
+    if (list_bar_ == nullptr) return;
+    lv_obj_set_pos(list_bar_, 6, kListTop + list_sel_ * kListRow);
+    lv_obj_scroll_to_view(list_bar_, LV_ANIM_OFF);   // 选中行滚进可见区
 }
 
 void RadioApp::AdjustVolume(int delta) {
@@ -764,11 +848,33 @@ void RadioApp::AdjustVolume(int delta) {
 void RadioApp::HandleKey(int key) {
     if (!active_ || root_ == nullptr) return;
     switch (key) {
-        case 0: AdjustVolume(+10); break;   // UP 短按:音量+
-        case 1: AdjustVolume(-10); break;   // DOWN 短按:音量-
-        case 3: ChangeStation(-1); break;   // UP 长按:上一台
-        case 4: ChangeStation(+1); break;   // DOWN 长按:下一台
-        case 2:   // OK:播放/暂停
+        case 0:   // UP 短按:列表开=选上台,列表关=音量+
+            if (list_open_) MoveListSel(-1);
+            else AdjustVolume(+10);
+            break;
+        case 1:   // DOWN 短按:列表开=选下台,列表关=音量-
+            if (list_open_) MoveListSel(+1);
+            else AdjustVolume(-10);
+            break;
+        case 3:   // UP 长按:列表开关切换(无列表 UI 时降级上一台)
+        case 4:   // DOWN 长按:同上(两键均为开关)
+            if (list_panel_ == nullptr) {
+                ChangeStation(key == 3 ? -1 : +1);
+            } else if (list_open_) {
+                CloseStationList();
+            } else {
+                OpenStationList();
+            }
+            break;
+        case 2:   // OK:列表开=播放选中并返回播放页;列表关=播放/暂停
+            if (list_open_) {
+                int pick = list_sel_;
+                CloseStationList();
+                if (pick != sel_ || !TaskRunning()) {
+                    PlayStation(pick);
+                }
+                break;
+            }
             if (TaskRunning() && !StopRequested()) {
                 CancelStartTimer();
                 StopPlay();
@@ -823,6 +929,7 @@ void RadioApp::Enter() {
 
 void RadioApp::Leave() {
     StopPlay();
+    CloseStationList();   // 列表随会话收起(状态标志复位)
     esp_wifi_set_ps(WIFI_PS_MAX_MODEM);   // 恢复省电(见 Enter 注释)
     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
         CancelStartTimer();   // 待启动的续播随会话作废(防退出后幽灵播放)
@@ -842,9 +949,11 @@ void RadioApp::ResetUiRefs() {
     root_ = nullptr;
     for (int i = 0; i < kMaxStations; i++) {
         name_labels_[i] = nullptr;
-        freq_labels_[i] = nullptr;
     }
     for (int i = 0; i < 6; i++) st_labels_[i] = nullptr;
+    list_panel_ = nullptr;
+    list_bar_ = nullptr;
+    list_open_ = false;
     status_label_ = nullptr;
     needle_ = glow_ = nullptr;
 }

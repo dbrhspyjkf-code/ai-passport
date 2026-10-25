@@ -36,6 +36,11 @@ STATIONS = {
     "gdxw": ("广东新闻FM91.4", "http://ls.qingting.fm/live/1254.m3u8", False),
     "zjjs": ("珠江经济FM97.4", "http://ls.qingting.fm/live/1259.m3u8", False),
     "szzy": ("深圳综艺广播", "http://ls.qingting.fm/live/1271.m3u8", False),
+    # 国际台(英文;2026-10-25 OrangePi ffmpeg 实测直连可达,无需代理)
+    "bbcws": ("BBC World Service", "http://stream.live.vc.bbcmedia.co.uk/bbc_world_service", False),
+    "npr": ("NPR News", "https://npr-ice.streamguys1.com/live.mp3", False),
+    "kexp": ("KEXP 独立音乐", "https://kexp-mp3-128.streamguys1.com/kexp128.mp3", False),
+    "rp": ("Radio Paradise", "https://stream.radioparadise.com/mp3-128", False),
     # 国际台(走本机代理)
     "fip":  ("FIP 法国电台", "http://icecast.radiofrance.fr/fip-midfi.mp3", True),
 }
