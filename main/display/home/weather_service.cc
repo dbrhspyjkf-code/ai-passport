@@ -9,6 +9,8 @@
 
 #include "cJSON.h"
 #include "esp_crt_bundle.h"
+
+#include "poller_http.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -60,7 +62,8 @@ void WeatherService::Start(const std::string& url, int interval_minutes) {
 }
 
 bool WeatherService::Poll() {
-    static char body[1024];
+    char* body = poller_http::body;   // 仅 poller 任务调用,串行安全
+    const size_t kBodyCap = sizeof(poller_http::body);
     int len = 0;
     esp_http_client_config_t cfg = {};
     cfg.url = url_.c_str();
@@ -73,9 +76,9 @@ bool WeatherService::Poll() {
         if (esp_http_client_open(client, 0) == ESP_OK) {
             esp_http_client_fetch_headers(client);
             int n;
-            while ((n = esp_http_client_read(client, body + len, sizeof(body) - len - 1)) > 0) {
+            while ((n = esp_http_client_read(client, body + len, kBodyCap - len - 1)) > 0) {
                 len += n;
-                if (len >= (int)sizeof(body) - 1) break;
+                if (len >= (int)kBodyCap - 1) break;
             }
             body[len] = '\0';
             if (esp_http_client_get_status_code(client) == 200 && len > 0) ok = true;

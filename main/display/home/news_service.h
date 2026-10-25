@@ -44,11 +44,11 @@ public:
 private:
     NewsService() = default;
 
-    static const int kMaxSecs = 4;
-    static const int kMaxItemsPerSec = 6;
+    static const int kMaxSecs = 3;
+    static const int kMaxItemsPerSec = 5;
     struct Sec {
         char label[12];
-        char items[kMaxItemsPerSec][124];
+        char items[kMaxItemsPerSec][96];
         int count;
     };
     Sec secs_[kMaxSecs] = {};

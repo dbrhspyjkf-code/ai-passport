@@ -10,6 +10,8 @@
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
+
+#include "poller_http.h"
 #include "poller.h"
 #include "agenda_service.h"
 #include "freertos/FreeRTOS.h"
@@ -61,7 +63,8 @@ void FinanceApp::RefreshTab(int tab) {
 }
 
 bool FinanceApp::FetchJsonArray(const char* url, std::vector<Item>* out, bool portfolio_style) {
-    static char body[8192];
+    char* body = poller_http::body;   // 仅 poller 任务调用(RefreshTab←AgendaService::Poll),串行安全
+    const size_t kBodyCap = sizeof(poller_http::body);
     int len = 0;
     esp_http_client_config_t cfg = {};
     cfg.url = url;
@@ -74,9 +77,9 @@ bool FinanceApp::FetchJsonArray(const char* url, std::vector<Item>* out, bool po
         if (esp_http_client_open(client, 0) == ESP_OK) {
             esp_http_client_fetch_headers(client);
             int n;
-            while ((n = esp_http_client_read(client, body + len, sizeof(body) - len - 1)) > 0) {
+            while ((n = esp_http_client_read(client, body + len, kBodyCap - len - 1)) > 0) {
                 len += n;
-                if (len >= (int)sizeof(body) - 1) break;
+                if (len >= (int)kBodyCap - 1) break;
             }
             body[len] = '\0';
             if (esp_http_client_get_status_code(client) == 200 && len > 0) ok = true;
