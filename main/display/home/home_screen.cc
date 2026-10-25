@@ -22,6 +22,8 @@
 #include "weather_service.h"
 #include "mail_app.h"
 #include "news_app.h"
+#include "tools_app.h"
+#include "opi_app.h"
 #include "finance_app.h"
 #include "tetris_app.h"
 #include "flappy_app.h"
@@ -315,11 +317,11 @@ void HomeScreen::Create(lv_obj_t* parent, const lv_font_t* font) {
         lv_obj_center(tm);
     }
 
-    {   // AI 新闻图标:"闻"字(青)
+    {   // 工具文件夹图标:"工"字(青)
         lv_obj_t* nw = lv_label_create(launcher_items_[5]);
         lv_obj_set_style_text_font(nw, &font_home_cn_16, 0);
         lv_obj_set_style_text_color(nw, lv_color_hex(0x8ae0f7), 0);
-        lv_label_set_text(nw, "闻");
+        lv_label_set_text(nw, "工");
         lv_obj_center(nw);
     }
 
@@ -335,7 +337,7 @@ void HomeScreen::Create(lv_obj_t* parent, const lv_font_t* font) {
 }
 
 void HomeScreen::LauncherHighlight() {
-    static const char* kNames[kLauncherCount] = {"金融", "邮件", "播放", "计时", "娱乐", "新闻"};
+    static const char* kNames[kLauncherCount] = {"金融", "邮件", "播放", "计时", "娱乐", "工具"};
     for (int i = 0; i < kLauncherCount; i++) {
         if (launcher_items_[i] == nullptr) continue;
         lv_obj_set_style_border_color(launcher_items_[i],
@@ -350,9 +352,10 @@ void HomeScreen::LauncherHighlight() {
 
 void HomeScreen::SwitchApp(int idx) {
     // APP 索引:0=金融 1=邮件 2=答案之书 3=播放器(Sonos/HomePod) 4=计时,
-    // 5=娱乐文件夹,6=方块,7=Flappy,8=收音机,9=AI新闻,10=播放文件夹
-    // (3/8 由播放文件夹进入;2/6/7 由娱乐文件夹进入;启动栏 6 格见
-    //  HandleLauncherKey 的 kSlotApp;current_app_ 记真实占用者)
+    // 5=娱乐文件夹,6=方块,7=Flappy,8=收音机,9=AI新闻,10=播放文件夹,
+    // 11=工具文件夹,12=OrangePi
+    // (3/8 由播放文件夹进入;2/6/7 由娱乐文件夹进入;9/12 由工具文件夹进入;
+    //  启动栏 6 格见 HandleLauncherKey 的 kSlotApp;current_app_ 记真实占用者)
     // 已退出(Leave 后 active_=false)的同一 APP 允许重新进入
     if (idx == current_app_) {
         bool alive = false;
@@ -368,6 +371,8 @@ void HomeScreen::SwitchApp(int idx) {
             case 8: alive = RadioApp::Get().Active(); break;
             case 10: alive = MediaApp::Get().Active(); break;
             case 9: alive = NewsApp::Get().Active(); break;
+            case 11: alive = ToolsApp::Get().Active(); break;
+            case 12: alive = OpiApp::Get().Active(); break;
             default: break;
         }
         if (alive) return;   // 确实还在运行,跳过
@@ -387,6 +392,8 @@ void HomeScreen::SwitchApp(int idx) {
                 case 8: RadioApp::Get().Destroy(); break;
                 case 9: NewsApp::Get().Destroy(); break;
                 case 10: MediaApp::Get().Destroy(); break;
+                case 11: ToolsApp::Get().Destroy(); break;
+                case 12: OpiApp::Get().Destroy(); break;
                 default: break;
             }
             lvgl_port_unlock();
@@ -425,6 +432,12 @@ void HomeScreen::SwitchApp(int idx) {
     } else if (idx == 10) {
         MediaApp::Get().Create(parent);
         MediaApp::Get().Enter();
+    } else if (idx == 11) {
+        ToolsApp::Get().Create(parent);
+        ToolsApp::Get().Enter();
+    } else if (idx == 12) {
+        OpiApp::Get().Create(parent);
+        OpiApp::Get().Enter();
     } else {
         RadioApp::Get().Create(parent);
         RadioApp::Get().Enter();
@@ -449,6 +462,8 @@ bool HomeScreen::ExitCurrentApp() {
             case 8: RadioApp::Get().Destroy(); break;
             case 9: NewsApp::Get().Destroy(); break;
             case 10: MediaApp::Get().Destroy(); break;
+            case 11: ToolsApp::Get().Destroy(); break;
+            case 12: OpiApp::Get().Destroy(); break;
             default: break;
         }
         lvgl_port_unlock();
@@ -470,9 +485,10 @@ bool HomeScreen::HandleLauncherKey(int key) {
             return true;
         case 2:   // OK:进入选中 APP(切换时销毁上一个,同时最多 1 个 APP 对象)
             // 启动栏槽位 → APP 索引(播放器 3/收音机 8 由播放文件夹进入;
-            // 方块 6/Flappy 7/答案之书 2 由娱乐文件夹进入)
+            // 方块 6/Flappy 7/答案之书 2 由娱乐文件夹进入;
+            // 新闻 9/OrangePi 12 由工具文件夹进入)
             {
-                static const int kSlotApp[kLauncherCount] = {0, 1, 10, 4, 5, 9};
+                static const int kSlotApp[kLauncherCount] = {0, 1, 10, 4, 5, 11};
                 SwitchApp(kSlotApp[launcher_sel_]);
             }
             return true;

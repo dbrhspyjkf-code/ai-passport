@@ -28,6 +28,9 @@
 // hermes 主服务 /news/ai(AI 新闻 APP;源头=Pi cron 午报文件缓冲)
 #define HOME_NEWS_BASE_URL "http://192.168.1.200:8766"
 
+// hermes 主服务 /system/status(OrangePi APP;与 Mac Übersicht widget 同源)
+#define HOME_OPI_BASE_URL "http://192.168.1.200:8766"
+
 #include <string>
 
 #include "lvgl.h"
@@ -76,7 +79,7 @@ private:
     lv_obj_t* mail_label_ = nullptr;
     lv_timer_t* mail_blink_ = nullptr;       // 未读邮件信封图标(有未读才显示)
     lv_obj_t* app_name_label_ = nullptr;   // 横线下方:选中 APP 名
-    static const int kLauncherCount = 6;   // 金融/Email/播放文件夹/计时/娱乐文件夹/AI新闻
+    static const int kLauncherCount = 6;   // 金融/Email/播放文件夹/计时/娱乐文件夹/工具文件夹
     lv_obj_t* launcher_items_[kLauncherCount] = {};
     int launcher_sel_ = 0;
     lv_obj_t* battery_text_ = nullptr;    // "70%"(含充电 + 后缀)

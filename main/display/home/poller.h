@@ -39,4 +39,5 @@ void PollerConfig(const std::string& weather_url, int weather_interval_min,
                   const char* glm_key, int glm_interval_min,
                   const std::string& agenda_base_url, int agenda_interval_min,
                   const std::string& mail_base_url, int mail_interval_min,
-                  const std::string& news_base_url, int news_interval_min);
+                  const std::string& news_base_url, int news_interval_min,
+                  const std::string& opi_base_url);

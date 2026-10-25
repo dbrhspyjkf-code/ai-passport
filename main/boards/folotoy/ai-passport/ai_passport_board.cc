@@ -18,6 +18,8 @@
 #include "display/home/timer_app.h"
 #include "display/home/mail_app.h"
 #include "display/home/news_app.h"
+#include "display/home/tools_app.h"
+#include "display/home/opi_app.h"
 #include "display/idle_dim.h"
 #include "esp_lvgl_port.h"
 #include "ssid_manager.h"
@@ -222,6 +224,16 @@ private:
                     }
                     return;
                 }
+                auto& toolsU = ToolsApp::Get();
+                if (toolsU.Active()) {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        toolsU.HandleKey(0);   // 工具文件夹:上一项
+                        lvgl_port_unlock();
+                    }
+                    return;
+                }
+                auto& opiU = OpiApp::Get();
+                if (opiU.Active()) return;   // OrangePi:UP/DOWN 无功能,消费
                 auto& timerU = TimerApp::Get();
                 if (timerU.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
@@ -341,6 +353,16 @@ private:
                     }
                     return;
                 }
+                auto& toolsD = ToolsApp::Get();
+                if (toolsD.Active()) {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        toolsD.HandleKey(1);   // 工具文件夹:下一项
+                        lvgl_port_unlock();
+                    }
+                    return;
+                }
+                auto& opiD = OpiApp::Get();
+                if (opiD.Active()) return;   // OrangePi:UP/DOWN 无功能,消费
                 auto& timerD = TimerApp::Get();
                 if (timerD.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
@@ -491,6 +513,22 @@ private:
                 if (newsOK.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
                         newsOK.HandleKey(2);   // 刷新
+                        lvgl_port_unlock();
+                    }
+                    return;
+                }
+                auto& toolsOK = ToolsApp::Get();
+                if (toolsOK.Active()) {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        toolsOK.HandleKey(2);   // 工具文件夹:进入选中
+                        lvgl_port_unlock();
+                    }
+                    return;
+                }
+                auto& opiOK = OpiApp::Get();
+                if (opiOK.Active()) {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        opiOK.HandleKey(2);   // OrangePi:刷新
                         lvgl_port_unlock();
                     }
                     return;
