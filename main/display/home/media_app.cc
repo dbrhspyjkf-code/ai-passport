@@ -2,7 +2,7 @@
 #include "media_app.h"
 
 LV_FONT_DECLARE(font_home_cn_16);
-LV_FONT_DECLARE(font_material_symbols_20_4);
+LV_FONT_DECLARE(font_material_symbols_30_4);   // 行图标用 30px(固件已链接,零额外 flash)
 
 #include "material_symbols.h"
 #include "home_screen.h"
@@ -58,7 +58,7 @@ void MediaApp::Create(lv_obj_t* parent) {
 
     // 两个条目行(图标左,名称+副题右);屏 240×320,两行垂直居中偏上
     static const char* kNames[kEntryCount] = {"音乐播放器", "收音机"};
-    static const char* kSubs[kEntryCount] = {"Sonos · HomePod", "网络电台"};
+    static const char* kSubs[kEntryCount] = {"Sonos·HomePod", "网络电台"};   // 去空格防行框右侧裁切
     for (int i = 0; i < kEntryCount; i++) {
         lv_obj_t* row = lv_obj_create(root_);
         if (row == nullptr) { lv_obj_delete(root_); root_ = nullptr; return; }
@@ -66,7 +66,7 @@ void MediaApp::Create(lv_obj_t* parent) {
         lv_obj_set_style_bg_color(row, lv_color_hex(0x081710), 0);
         lv_obj_set_style_border_color(row, lv_color_hex(C_DIM), 0);
         lv_obj_set_style_border_width(row, 1, 0);
-        lv_obj_set_style_radius(row, 0, 0);
+        lv_obj_set_style_radius(row, 6, 0);   // 轻微圆角
         lv_obj_set_style_pad_all(row, 0, 0);
         lv_obj_set_scrollbar_mode(row, LV_SCROLLBAR_MODE_OFF);
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
@@ -85,19 +85,19 @@ void MediaApp::Create(lv_obj_t* parent) {
         lv_obj_set_style_text_font(name, &font_home_cn_16, 0);
         lv_obj_set_style_text_color(name, lv_color_hex(C_FG), 0);
         lv_label_set_text(name, kNames[i]);
-        lv_obj_align(name, LV_ALIGN_TOP_LEFT, 64, 7);
+        lv_obj_align(name, LV_ALIGN_TOP_LEFT, 58, 7);
         lv_obj_set_style_text_font(sub, &font_home_cn_16, 0);
         lv_obj_set_style_text_color(sub, lv_color_hex(C_DIM), 0);
         lv_label_set_text(sub, kSubs[i]);
-        lv_obj_align(sub, LV_ALIGN_TOP_LEFT, 64, 33);
+        lv_obj_align(sub, LV_ALIGN_TOP_LEFT, 58, 33);
     }
 
-    // 行图标 0:音符(与主页"播放"格同款 Material Symbols)
+    // 行图标 0:音符(Material Symbols 30px,与右侧 30×20 收音机图标体量相称)
     lv_obj_t* note = lv_label_create(rows_[0]);
-    lv_obj_set_style_text_font(note, &font_material_symbols_20_4, 0);
+    lv_obj_set_style_text_font(note, &font_material_symbols_30_4, 0);
     lv_obj_set_style_text_color(note, lv_color_hex(C_FG), 0);
     lv_label_set_text(note, MATERIAL_SYMBOLS_MUSIC_NOTE);
-    lv_obj_align(note, LV_ALIGN_TOP_LEFT, 20, 17);
+    lv_obj_align(note, LV_ALIGN_TOP_LEFT, 14, 14);
     // 行图标 1:收音机(机身+天线+喇叭点阵,与娱乐文件夹同款)
     lv_obj_t* rbody = mk_rect(rows_[1], 30, 20, 0xb7f5c4, 3);
     lv_obj_set_pos(rbody, 12, 30);

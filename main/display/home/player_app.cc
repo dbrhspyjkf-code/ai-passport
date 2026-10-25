@@ -21,7 +21,7 @@
 LV_FONT_DECLARE(font_home_cn_16);
 
 static const char* TAG = "player";
-static constexpr int kCoverSize = 64;
+static constexpr int kCoverSize = 80;   // 2026-10-25: 64→80,与 hermes _cover_art._SIZE 同步(字节数需精确匹配)
 static constexpr int kCoverPaletteBytes = 256 * 4;
 static constexpr int kCoverDataBytes = kCoverPaletteBytes + (kCoverSize * kCoverSize);
 
@@ -165,7 +165,7 @@ void PlayerApp::Create(lv_obj_t* parent) {
     // 专辑封面：服务器已转为 LVGL 原生 I8；设备只在 APP 打开后申请 5120B。
     cover_img_ = lv_image_create(root_);
     lv_obj_set_size(cover_img_, kCoverSize, kCoverSize);
-    // TAB 底部(y=40)与标题顶部之间的视觉居中位置：64px 封面自 y=64 开始。
+    // TAB 底部(y=40)与标题顶部(~152)之间居中:80px 封面 y=56..136,上下各留 16px。
     lv_obj_align(cover_img_, LV_ALIGN_TOP_MID, 0, 56);
     lv_obj_add_flag(cover_img_, LV_OBJ_FLAG_HIDDEN);
 

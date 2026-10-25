@@ -158,13 +158,14 @@ void HomeScreen::Create(lv_obj_t* parent, const lv_font_t* font) {
     lv_obj_set_style_border_color(avatar_box, lv_color_hex(C_DIM), 0);
     lv_obj_set_style_border_width(avatar_box, 1, 0);
     lv_obj_set_style_pad_all(avatar_box, 1, 0);
-    lv_obj_set_style_radius(avatar_box, 0, 0);
+    lv_obj_set_style_radius(avatar_box, 16, 0);   // 圆角头像框
     lv_obj_set_scrollbar_mode(avatar_box, LV_SCROLLBAR_MODE_OFF);
     lv_obj_clear_flag(avatar_box, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_align(avatar_box, LV_ALIGN_TOP_LEFT, 6, 34);
 
     avatar_img_ = lv_image_create(avatar_box);
     lv_image_set_src(avatar_img_, &img_home_avatar);
+    lv_obj_set_style_radius(avatar_img_, 15, 0);   // 图片四角同步裁圆(clip_corner)
     lv_obj_center(avatar_img_);
 
     // 眨眼:闭眼图片帧切换(每 10 秒闭合 150ms)
@@ -246,7 +247,7 @@ void HomeScreen::Create(lv_obj_t* parent, const lv_font_t* font) {
         lv_obj_set_style_bg_color(launcher_items_[i], lv_color_hex(C_BG), 0);
         lv_obj_set_style_border_color(launcher_items_[i], lv_color_hex(C_DIM), 0);
         lv_obj_set_style_border_width(launcher_items_[i], 1, 0);
-        lv_obj_set_style_radius(launcher_items_[i], 0, 0);
+        lv_obj_set_style_radius(launcher_items_[i], 6, 0);   // 圆角图标框
         lv_obj_set_style_pad_all(launcher_items_[i], 0, 0);
         lv_obj_set_scrollbar_mode(launcher_items_[i], LV_SCROLLBAR_MODE_OFF);
         lv_obj_clear_flag(launcher_items_[i], LV_OBJ_FLAG_SCROLLABLE);

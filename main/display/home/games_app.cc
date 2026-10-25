@@ -61,7 +61,7 @@ void GamesApp::Create(lv_obj_t* parent) {
         lv_obj_set_style_bg_color(row, lv_color_hex(0x081710), 0);
         lv_obj_set_style_border_color(row, lv_color_hex(C_DIM), 0);
         lv_obj_set_style_border_width(row, 1, 0);
-        lv_obj_set_style_radius(row, 0, 0);
+        lv_obj_set_style_radius(row, 6, 0);   // 轻微圆角(与播放文件夹一致)
         lv_obj_set_style_pad_all(row, 0, 0);
         lv_obj_set_scrollbar_mode(row, LV_SCROLLBAR_MODE_OFF);
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
