@@ -21,7 +21,8 @@
 LV_FONT_DECLARE(font_home_cn_16);
 
 static const char* TAG = "player";
-static constexpr int kCoverSize = 80;   // 2026-10-25: 64→80,与 hermes _cover_art._SIZE 同步(字节数需精确匹配)
+static constexpr int kCoverSize = 64;   // 与 hermes _cover_art._SIZE 同步(字节数精确匹配)。曾试 80:
+                                        // 播放期堆最大连续块仅 ~5120B,7424B 缓冲分配必败→无封面,已回退
 static constexpr int kCoverPaletteBytes = 256 * 4;
 static constexpr int kCoverDataBytes = kCoverPaletteBytes + (kCoverSize * kCoverSize);
 
@@ -165,7 +166,7 @@ void PlayerApp::Create(lv_obj_t* parent) {
     // 专辑封面：服务器已转为 LVGL 原生 I8；设备只在 APP 打开后申请 5120B。
     cover_img_ = lv_image_create(root_);
     lv_obj_set_size(cover_img_, kCoverSize, kCoverSize);
-    // TAB 底部(y=40)与标题顶部(~152)之间居中:80px 封面 y=56..136,上下各留 16px。
+    // TAB 底部(y=40)与标题顶部(~152)之间:64px 封面自 y=56 开始。
     lv_obj_align(cover_img_, LV_ALIGN_TOP_MID, 0, 56);
     lv_obj_add_flag(cover_img_, LV_OBJ_FLAG_HIDDEN);
 
@@ -251,6 +252,12 @@ void PlayerApp::Run() {
     }
     int64_t last_entity_refresh_us = 0;
     int last_entity_refresh_idx = -1;
+    // 封面缓冲在首个 HTTP 之前预分配:之后堆被 HA 客户端切碎,largest 常
+    // 只剩 ~5120,与 64×64 缓冲(5120B)正好同量级,晚分配容易失败
+    if (cover_data_ == nullptr) {
+        cover_data_ = static_cast<uint8_t*>(heap_caps_malloc(kCoverDataBytes, MALLOC_CAP_8BIT));
+        if (cover_data_ == nullptr) ESP_LOGW(TAG, "cover buffer prealloc failed (%dB)", kCoverDataBytes);
+    }
     for (;;) {
         int c = cmd_.exchange(0);
         int t = cmd_target_.load();
@@ -303,7 +310,11 @@ void PlayerApp::Run() {
             UpdateUi();
             lvgl_port_unlock();
         }
-        for (int i = 0; i < 30 && running_.load(); i++) vTaskDelay(pdMS_TO_TICKS(100));
+        // 3s 轮询间隔,但有按键命令立即醒来处理——原来固定睡满 3s,
+        // 按键要等整轮才被执行(实测延迟 2.6-3.1s,"像定住了")
+        for (int i = 0; i < 30 && running_.load() && cmd_.load() == 0; i++) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
         if (!running_.load()) break;
     }
     ResetCover();

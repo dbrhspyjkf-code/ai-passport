@@ -1,5 +1,6 @@
 #include <esp_err.h>
 #include <esp_log.h>
+#include <esp_heap_caps.h>
 #include <material_symbols.h>
 #include <cstdlib>
 #include <cstring>
@@ -288,6 +289,18 @@ void LvglDisplay::UpdateStatusBar(bool update_all) {
         {
             DisplayLockGuard lock(this);
             if (home_screen_ == nullptr) {
+                // 开机内存低谷(MQTT/OTA/音频引擎初始化叠加,慢开机时更深)里建主页
+                // 会撞上 LVGL 样式分配失败→断言(2026-10-25 HomeScreen::Create:313
+                // 实锤)。free<16K 或 largest<4K 时推后一个 tick(1s),最多等 10s。
+                static int s_home_defer = 0;
+                uint32_t free_now = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
+                uint32_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT);
+                if ((free_now < 16384 || largest < 4096) && s_home_defer < 10) {
+                    s_home_defer++;
+                    ESP_LOGW(TAG, "defer home screen (%d): free=%u largest=%u",
+                             s_home_defer, (unsigned)free_now, (unsigned)largest);
+                    return;
+                }
                 home_screen_ = &HomeScreen::Get();
                 home_screen_->Create(lv_screen_active(),
                                      static_cast<LvglTheme*>(current_theme_)->text_font()->font());

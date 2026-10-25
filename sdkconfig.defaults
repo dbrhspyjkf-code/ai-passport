@@ -87,3 +87,7 @@ CONFIG_ESP_TASK_WDT_TIMEOUT=8
 CONFIG_LWIP_TCP_WND_DEFAULT=2880
 CONFIG_LWIP_TCP_MSL=6000
 CONFIG_LWIP_MAX_ACTIVE_TCP=24
+
+# LVGL 断言处理:默认 while(1) 会让任务挂死 10s 到 task_wdt;改为即时 panic
+# (头文件 main/lvgl_hooks/lv_assert_handler.h,根 CMakeLists 全局 include)
+CONFIG_LV_ASSERT_HANDLER_INCLUDE="lv_assert_handler.h"
