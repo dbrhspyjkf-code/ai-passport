@@ -12,6 +12,7 @@
 #include "esp_timer.h"
 #include "esp_netif.h"
 #include "esp_system.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -134,14 +135,26 @@ void Poller::Loop() {
         vTaskDelay(pdMS_TO_TICKS(500));
     }
 
-    // 开机冷静期:boot 后 ~5-10s 是 MQTT/OTA/音频引擎初始化的内存
-    // 高峰(min sram 实测低至 888B,首轮 HTTP 与其叠加),错开 10s
-    // 再发首轮请求抬高内存低谷。仅开机时等(后续 Stop/Start 不等)。
+    // 开机冷静期:让开 MQTT/OTA/音频引擎/主页字形渲染的内存高峰。
+    // 2026-10-25 复测:上述初始化在 4.2s 已全部完成(poller 4.6s 才启动),
+    // 且各数据源均为 hermes LAN 纯 HTTP(~2.5K 瞬时客户端,无 TLS)——
+    // 老的固定 10s 把首帧数据拖到 16.5s。现改为:基础 2s 覆盖主页字形
+    // 渲染,空闲堆 <15K 时逐秒让路,总上限仍 10s(保留老保护语义)。
     if (esp_timer_get_time() < 60000000ULL) {
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < 2; i++) {
             Beat();
             vTaskDelay(pdMS_TO_TICKS(1000));
         }
+        for (int i = 0; i < 8; i++) {
+            uint32_t free_now = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
+            if (free_now >= 15360) break;
+            ESP_LOGI(TAG, "boot cooldown: heap low (%u B), wait 1s", (unsigned)free_now);
+            Beat();
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+        ESP_LOGI(TAG, "first round ready: free=%u largest=%u",
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_DEFAULT),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
     }
 
     for (;;) {
