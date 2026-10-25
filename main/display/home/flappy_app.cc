@@ -13,6 +13,10 @@ LV_FONT_DECLARE(font_pixel_clock_20);   // 点阵数字(局内分数)
 
 #include "esp_random.h"
 #include "esp_lvgl_port.h"
+#include "esp_log.h"
+#include "esp_heap_caps.h"
+
+static const char* TAG = "flappy";
 
 // ---- FlapPyBird 原版配色 ----
 #define C_SKY 0x4ec0ca       // 天空青
@@ -37,24 +41,71 @@ FlappyApp& FlappyApp::Get() {
     return instance;
 }
 
-// 小矩形工具(可选圆角;LVGL 对象最小样式开销)
-static lv_obj_t* mk_rect(lv_obj_t* parent, int w, int h, uint32_t color, int radius = 0) {
+// ---- OOM 保护(照 radio_app 教训:碎片堆上 lv_obj_create 会返回 NULL,
+// 不判空=空指针 panic;更险的是字形渲染的 A8 缓冲分配失败会让
+// LV_ASSERT_MALLOC 落进 while(1) → taskLVGL 卡死 → WDT 重启) ----
+static bool s_ui_oom = false;
+
+// 共享样式注册表:mk_rect 按 (色,圆角,描边) 组合建一个静态样式,对象
+// 只挂样式引用。原来 82 个对象各带 5 条本地样式属性 ≈15KB,把堆吃光
+// 正是"进 Flappy 卡死"的元凶;共享后 ≈6KB。
+struct StyleKey { uint32_t color; int16_t radius; bool bordered; };
+static StyleKey s_keys[28];
+static lv_style_t s_styles[28];
+static int s_style_n = 0;
+
+static lv_style_t* get_style(uint32_t color, int radius, bool bordered) {
+    for (int i = 0; i < s_style_n; i++) {
+        if (s_keys[i].color == color && s_keys[i].radius == radius &&
+            s_keys[i].bordered == bordered) {
+            return &s_styles[i];
+        }
+    }
+    if (s_style_n >= 28) return nullptr;
+    int i = s_style_n++;
+    s_keys[i] = {color, (int16_t)radius, bordered};
+    lv_style_init(&s_styles[i]);
+    lv_style_set_bg_color(&s_styles[i], lv_color_hex(color));
+    lv_style_set_bg_opa(&s_styles[i], LV_OPA_COVER);
+    lv_style_set_pad_all(&s_styles[i], 0);
+    lv_style_set_radius(&s_styles[i], radius);
+    if (bordered) {
+        lv_style_set_border_color(&s_styles[i], lv_color_hex(C_OUTLINE));
+        lv_style_set_border_width(&s_styles[i], 1);
+    } else {
+        lv_style_set_border_width(&s_styles[i], 0);
+    }
+    return &s_styles[i];
+}
+
+// 小矩形工具(共享样式;可选圆角/描边)
+static lv_obj_t* mk_rect(lv_obj_t* parent, int w, int h, uint32_t color,
+                         int radius = 0, bool bordered = false) {
     lv_obj_t* r = lv_obj_create(parent);
+    if (r == nullptr) { s_ui_oom = true; return nullptr; }
+    lv_style_t* st = get_style(color, radius, bordered);
+    if (st == nullptr) { s_ui_oom = true; return nullptr; }
+    lv_obj_remove_style_all(r);
+    lv_obj_add_style(r, st, 0);
     lv_obj_set_size(r, w, h);
-    lv_obj_set_style_bg_color(r, lv_color_hex(color), 0);
-    lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(r, 0, 0);
-    lv_obj_set_style_radius(r, radius, 0);
-    lv_obj_set_style_pad_all(r, 0, 0);
-    lv_obj_set_scrollbar_mode(r, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_clear_flag(r, LV_OBJ_FLAG_SCROLLABLE);
     return r;
 }
 
 void FlappyApp::Create(lv_obj_t* parent) {
     if (root_ != nullptr) return;
+    s_ui_oom = false;
+    // 任一阶段分配失败:删 root_(连带子对象)、清引用。用户看到的还是
+    // 娱乐文件夹,堆回暖后再进会重试——"打不开"远好于"卡死重启"。
+    auto fail = [this]() {
+        ESP_LOGE(TAG, "UI create failed (OOM): free=%u largest=%u",
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_DEFAULT),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
+        if (root_ != nullptr) lv_obj_delete(root_);
+        ResetUiRefs();
+    };
 
     root_ = lv_obj_create(parent);
+    if (root_ == nullptr) { fail(); return; }
     lv_obj_set_size(root_, LV_HOR_RES, LV_VER_RES);
     lv_obj_set_style_bg_color(root_, lv_color_hex(C_SKY), 0);
     lv_obj_set_style_border_width(root_, 0, 0);
@@ -63,78 +114,72 @@ void FlappyApp::Create(lv_obj_t* parent) {
     lv_obj_set_scrollbar_mode(root_, LV_SCROLLBAR_MODE_OFF);
     lv_obj_clear_flag(root_, LV_OBJ_FLAG_SCROLLABLE);
 
+    // ---- 静态背景(云/城市/灌木/地面):先建=底层,管道从其前面经过 ----
+    BuildScenery();
+    if (s_ui_oom) { fail(); return; }
+
     // ---- 管道池(在背景之上,鸟/覆盖层之下) ----
-    for (int i = 0; i < kPipeCount; i++) {
-        for (int s = 0; s < 2; s++) {
-            lv_obj_t* ct = lv_obj_create(root_);
-            lv_obj_set_size(ct, kPipeW, 100);
-            lv_obj_set_style_bg_color(ct, lv_color_hex(C_GRASS), 0);
-            lv_obj_set_style_border_color(ct, lv_color_hex(C_OUTLINE), 0);
-            lv_obj_set_style_border_width(ct, 1, 0);
-            lv_obj_set_style_radius(ct, 0, 0);
-            lv_obj_set_style_pad_all(ct, 0, 0);
-            lv_obj_set_scrollbar_mode(ct, LV_SCROLLBAR_MODE_OFF);
-            lv_obj_clear_flag(ct, LV_OBJ_FLAG_SCROLLABLE);
-            lv_obj_add_flag(ct, LV_OBJ_FLAG_HIDDEN);
+    for (int i = 0; i < kPipeCount && !s_ui_oom; i++) {
+        for (int s = 0; s < 2 && !s_ui_oom; s++) {
+            lv_obj_t* ct = mk_rect(root_, kPipeW, 100, C_GRASS, 0, true);
             pipe_ct_[i][s] = ct;
+            if (ct != nullptr) lv_obj_add_flag(ct, LV_OBJ_FLAG_HIDDEN);
             pipe_hl_[i][s] = mk_rect(ct, 4, 80, C_GRASS_L);
-            lv_obj_set_pos(pipe_hl_[i][s], 4, 0);
+            if (pipe_hl_[i][s] != nullptr) lv_obj_set_pos(pipe_hl_[i][s], 4, 0);
             pipe_sh_[i][s] = mk_rect(ct, 4, 80, C_GRASS_D);
-            lv_obj_set_pos(pipe_sh_[i][s], kPipeW - 9, 0);
+            if (pipe_sh_[i][s] != nullptr) lv_obj_set_pos(pipe_sh_[i][s], kPipeW - 9, 0);
             // 缘口宽帽(带描边+两道明暗条)
-            lv_obj_t* lip = lv_obj_create(ct);
-            lv_obj_set_size(lip, 42, kLipH);
-            lv_obj_set_style_bg_color(lip, lv_color_hex(C_GRASS), 0);
-            lv_obj_set_style_border_color(lip, lv_color_hex(C_OUTLINE), 0);
-            lv_obj_set_style_border_width(lip, 1, 0);
-            lv_obj_set_style_radius(lip, 0, 0);
-            lv_obj_set_style_pad_all(lip, 0, 0);
-            lv_obj_set_scrollbar_mode(lip, LV_SCROLLBAR_MODE_OFF);
-            lv_obj_clear_flag(lip, LV_OBJ_FLAG_SCROLLABLE);
-            lv_obj_t* lhl = mk_rect(lip, 4, kLipH - 4, C_GRASS_L);
-            lv_obj_set_pos(lhl, 5, 2);
-            lv_obj_t* lsh = mk_rect(lip, 5, kLipH - 4, C_GRASS_D);
-            lv_obj_set_pos(lsh, 32, 2);
+            lv_obj_t* lip = mk_rect(ct, 42, kLipH, C_GRASS, 0, true);
             pipe_lip_[i][s] = lip;
+            lv_obj_t* lhl = mk_rect(lip, 4, kLipH - 4, C_GRASS_L);
+            if (lhl != nullptr) lv_obj_set_pos(lhl, 5, 2);
+            lv_obj_t* lsh = mk_rect(lip, 5, kLipH - 4, C_GRASS_D);
+            if (lsh != nullptr) lv_obj_set_pos(lsh, 32, 2);
         }
     }
-
-    BuildScenery();
-
+    if (s_ui_oom) { fail(); return; }
     // ---- 鸟:容器内拼 体/眼/瞳/喙/翅(视觉 17x12,判定 15x10) ----
     bird_ = lv_obj_create(root_);
-    lv_obj_set_size(bird_, 17, 12);
-    lv_obj_set_style_bg_opa(bird_, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(bird_, 0, 0);
-    lv_obj_set_style_pad_all(bird_, 0, 0);
-    lv_obj_set_style_radius(bird_, 0, 0);
-    lv_obj_set_scrollbar_mode(bird_, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_clear_flag(bird_, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_t* body = mk_rect(bird_, 17, 12, C_BIRD, 4);
-    lv_obj_set_pos(body, 0, 0);
-    lv_obj_t* eyeball = mk_rect(bird_, 6, 6, C_EYEBALL, 3);
-    lv_obj_set_pos(eyeball, 8, 1);
-    lv_obj_t* pupil = mk_rect(bird_, 2, 3, C_PUPIL);
-    lv_obj_set_pos(pupil, 11, 3);
-    lv_obj_t* beak = mk_rect(bird_, 7, 4, C_BEAK, 1);
-    lv_obj_set_pos(beak, 11, 7);
-    wing_ = mk_rect(bird_, 8, 5, C_WING, 2);
-    lv_obj_set_pos(wing_, 1, 3);
+    if (bird_ == nullptr) { s_ui_oom = true; }
+    if (!s_ui_oom) {
+        lv_obj_set_size(bird_, 17, 12);
+        lv_obj_set_style_bg_opa(bird_, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(bird_, 0, 0);
+        lv_obj_set_style_pad_all(bird_, 0, 0);
+        lv_obj_set_style_radius(bird_, 0, 0);
+        lv_obj_clear_flag(bird_, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t* body = mk_rect(bird_, 17, 12, C_BIRD, 4);
+        if (body != nullptr) lv_obj_set_pos(body, 0, 0);
+        lv_obj_t* eyeball = mk_rect(bird_, 6, 6, C_EYEBALL, 3);
+        if (eyeball != nullptr) lv_obj_set_pos(eyeball, 8, 1);
+        lv_obj_t* pupil = mk_rect(bird_, 2, 3, C_PUPIL);
+        if (pupil != nullptr) lv_obj_set_pos(pupil, 11, 3);
+        lv_obj_t* beak = mk_rect(bird_, 7, 4, C_BEAK, 1);
+        if (beak != nullptr) lv_obj_set_pos(beak, 11, 7);
+        wing_ = mk_rect(bird_, 8, 5, C_WING, 2);
+        if (wing_ != nullptr) lv_obj_set_pos(wing_, 1, 3);
+    }
+    if (s_ui_oom) { fail(); return; }
 
     // ---- 局内分数:白字+深影(原版风格,顶部居中) ----
     score_shadow_ = lv_label_create(root_);
+    score_label_ = lv_label_create(root_);
+    overlay_label_ = lv_label_create(root_);
+    if (score_shadow_ == nullptr || score_label_ == nullptr ||
+        overlay_label_ == nullptr) {
+        fail();
+        return;
+    }
     lv_obj_set_style_text_font(score_shadow_, &font_pixel_clock_20, 0);
     lv_obj_set_style_text_color(score_shadow_, lv_color_hex(C_OUTLINE), 0);
     lv_label_set_text(score_shadow_, "");
     lv_obj_align(score_shadow_, LV_ALIGN_TOP_MID, 2, 10);
-    score_label_ = lv_label_create(root_);
     lv_obj_set_style_text_font(score_label_, &font_pixel_clock_20, 0);
     lv_obj_set_style_text_color(score_label_, lv_color_hex(0xffffff), 0);
     lv_label_set_text(score_label_, "");
     lv_obj_align(score_label_, LV_ALIGN_TOP_MID, 0, 8);
 
     // ---- 覆盖提示(READY/GAME OVER) ----
-    overlay_label_ = lv_label_create(root_);
     lv_obj_set_style_text_font(overlay_label_, &font_home_cn_16, 0);
     lv_obj_set_style_text_color(overlay_label_, lv_color_hex(0xffffff), 0);
     lv_obj_set_style_bg_color(overlay_label_, lv_color_hex(0x000000), 0);
@@ -157,6 +202,7 @@ void FlappyApp::BuildScenery() {
     };
     for (int i = 0; i < 6; i++) {
         lv_obj_t* c = mk_rect(root_, clouds[i][2], 12, C_CLOUD, 6);
+        if (c == nullptr) return;
         lv_obj_set_pos(c, clouds[i][0], clouds[i][1]);
     }
     // 城市剪影(灰绿楼宇,底边统一 252)
@@ -166,11 +212,14 @@ void FlappyApp::BuildScenery() {
     };
     for (int i = 0; i < 9; i++) {
         lv_obj_t* b = mk_rect(root_, city[i][1], city[i][2], C_CITY);
+        if (b == nullptr) return;
         lv_obj_set_pos(b, city[i][0], 252 - city[i][2]);
     }
     lv_obj_t* b2 = mk_rect(root_, 26, 26, C_CITY);
+    if (b2 == nullptr) return;
     lv_obj_set_pos(b2, 200, 226);
     lv_obj_t* b3 = mk_rect(root_, 14, 20, C_CITY);
+    if (b3 == nullptr) return;
     lv_obj_set_pos(b3, 228, 232);
     // 灌木带(圆顶,亮暗交替,坐在地面带上)
     static const int bush[8][3] = {   // {x, w, h}
@@ -180,17 +229,22 @@ void FlappyApp::BuildScenery() {
     for (int i = 0; i < 8; i++) {
         lv_obj_t* s = mk_rect(root_, bush[i][1], bush[i][2],
             (i % 2 == 0) ? C_BUSH_L : C_BUSH_D, bush[i][2] / 2);
+        if (s == nullptr) return;
         lv_obj_set_pos(s, bush[i][0], kGroundTop - bush[i][2]);
     }
     // 地面:顶草绿条(带 1px 深线)+ 米黄主体 + 滚动条纹
     lv_obj_t* grass = mk_rect(root_, 240, 8, C_GRASS);
+    if (grass == nullptr) return;
     lv_obj_set_pos(grass, 0, kGroundTop);
     lv_obj_t* gline = mk_rect(root_, 240, 2, C_BUSH_D);
+    if (gline == nullptr) return;
     lv_obj_set_pos(gline, 0, kGroundTop + 8);
     lv_obj_t* base = mk_rect(root_, 240, 320 - kGroundTop - 10, C_BASE);
+    if (base == nullptr) return;
     lv_obj_set_pos(base, 0, kGroundTop + 10);
     for (int i = 0; i < kGBands; i++) {
         gband_[i] = mk_rect(root_, 12, 320 - kGroundTop - 10, C_BASE_DK);
+        if (gband_[i] == nullptr) return;
         lv_obj_set_pos(gband_[i], i * 30, kGroundTop + 10);
     }
 }
@@ -364,6 +418,7 @@ void FlappyApp::TickCb(lv_timer_t* t) {
 }
 
 void FlappyApp::Enter() {
+    if (root_ == nullptr) return;   // Create 因堆碎片失败:直接返回不进游戏
     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
         if (root_ != nullptr && !active_) {
             lv_obj_clear_flag(root_, LV_OBJ_FLAG_HIDDEN);
@@ -385,10 +440,28 @@ void FlappyApp::Destroy() {
     if (lvgl_port_lock(pdMS_TO_TICKS(1000))) {
         if (root_ != nullptr) {
             lv_obj_delete(root_);
-            root_ = nullptr;
         }
+        ResetUiRefs();
         lvgl_port_unlock();
     }
+}
+
+void FlappyApp::ResetUiRefs() {
+    root_ = nullptr;
+    bird_ = nullptr;
+    wing_ = nullptr;
+    for (int i = 0; i < kPipeCount; i++) {
+        for (int s = 0; s < 2; s++) {
+            pipe_ct_[i][s] = nullptr;
+            pipe_hl_[i][s] = nullptr;
+            pipe_sh_[i][s] = nullptr;
+            pipe_lip_[i][s] = nullptr;
+        }
+    }
+    for (int i = 0; i < kGBands; i++) gband_[i] = nullptr;
+    score_label_ = nullptr;
+    score_shadow_ = nullptr;
+    overlay_label_ = nullptr;
 }
 
 void FlappyApp::Leave() {

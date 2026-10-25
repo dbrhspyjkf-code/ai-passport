@@ -74,6 +74,7 @@ private:
     bool active_ = false;
 
     void BuildScenery();   // 天空/云/城市/灌木/地面(建一次)
+    void ResetUiRefs();    // 清空全部 UI 对象引用(Destroy/Create 失败回退共用)
     void ResetGame();
     void Flap();
     void SetOver();
