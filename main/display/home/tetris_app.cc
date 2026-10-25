@@ -112,6 +112,7 @@ void TetrisApp::Create(lv_obj_t* parent) {
     cells_layer_ = lv_obj_create(board_canvas_);
     lv_obj_set_size(cells_layer_, kCols * kCell, kRows * kCell);
     lv_obj_set_style_bg_opa(cells_layer_, LV_OPA_TRANSP, 0);
+    memset(cell_pool_, 0, sizeof(cell_pool_));   // 上次 Destroy 的指针已随对象树失效
     lv_obj_set_style_border_width(cells_layer_, 0, 0);
     lv_obj_set_style_pad_all(cells_layer_, 0, 0);
     lv_obj_set_scrollbar_mode(cells_layer_, LV_SCROLLBAR_MODE_OFF);
@@ -198,6 +199,7 @@ void TetrisApp::ResetGame() {
     tick_count_ = 0;
     next_type_ = esp_random() % 7;
     SpawnPiece();
+    DrawBoardSegments();
     lv_obj_add_flag(overlay_label_, LV_OBJ_FLAG_HIDDEN);
     UpdateHud();
     DrawNext();
@@ -261,6 +263,7 @@ void TetrisApp::LockPiece() {
         UpdateHud();
     }
     SpawnPiece();
+    DrawBoardSegments();   // 棋盘已变:重建行段(出生即最终宽度)
 }
 
 int TetrisApp::ClearLines() {
@@ -376,7 +379,8 @@ void TetrisApp::HandleKey(int key) {
 lv_obj_t* TetrisApp::PoolGet(int idx) {
     if (cell_pool_[idx] != nullptr) return cell_pool_[idx];
     lv_obj_t* cell = lv_obj_create(cells_layer_);
-    if (cell == nullptr) return nullptr;   // OOM 防御:缺段不崩
+    if (cell == nullptr) return nullptr;   // OOM 防御:缺格不崩
+    lv_obj_set_size(cell, kCell - 2, kCell - 2);   // 固定尺寸:出生即最终大小
     lv_obj_set_style_bg_opa(cell, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(cell, 0, 0);
     lv_obj_set_style_radius(cell, 0, 0);
@@ -387,22 +391,14 @@ lv_obj_t* TetrisApp::PoolGet(int idx) {
     return cell;
 }
 
-void TetrisApp::DrawBoard() {
+// 锁定格重绘:行程编码段(连续同色合并为一条矩形),clean+整体重建。
+// 仅在棋盘变化时调用(落定/消行/重开,≤1 次/秒)——段对象"出生即最终
+// 宽度",规避此 LVGL 配置"创建后改宽度不渲染"的坑(每帧 set_size 的
+// 旧 RLE 实现因此"落地变长矩形");满盘典型 40-80 段,瞬时重建峰值小。
+void TetrisApp::DrawBoardSegments() {
     if (cells_layer_ == nullptr) return;
-    // 行段绘制:每行连续同色合并为一条宽矩形(行程编码),
-    // 惰性取段设 位置/尺寸/颜色;剩余隐藏。运行期零建删。
-    int n = 0;
-    auto put = [&](int r, int c0, int cells_w, int color_idx) -> bool {
-        lv_obj_t* cell = PoolGet(n);
-        if (cell == nullptr) return false;   // OOM:本帧缺段,下帧再试
-        n++;
-        lv_obj_clear_flag(cell, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_set_pos(cell, c0 * kCell + 1, r * kCell + 1);
-        lv_obj_set_size(cell, cells_w * kCell - 2, kCell - 2);
-        lv_obj_set_style_bg_color(cell, lv_color_hex(kColors[color_idx]), 0);
-        return true;
-    };
-    // 已锁定格:逐行扫连续同色段
+    lv_obj_clean(cells_layer_);   // 段全部删除后重建(先释放,峰值不叠加)
+    memset(cell_pool_, 0, sizeof(cell_pool_));   // 池指针已随 clean 失效
     for (int r = 0; r < kRows; r++) {
         int c = 0;
         while (c < kCols) {
@@ -410,23 +406,33 @@ void TetrisApp::DrawBoard() {
             uint8_t col = board_[r][c];
             int c0 = c;
             while (c < kCols && board_[r][c] == col) c++;
-            if (n >= kPoolSize) { r = kRows; break; }   // 池尽:丢弃余段
-            put(r, c0, c - c0, col);
+            lv_obj_t* seg = lv_obj_create(cells_layer_);
+            if (seg == nullptr) return;   // OOM:本帧缺段,下次落定再补
+            lv_obj_set_size(seg, (c - c0) * kCell - 2, kCell - 2);
+            lv_obj_set_style_bg_color(seg, lv_color_hex(kColors[col]), 0);
+            lv_obj_set_style_bg_opa(seg, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_width(seg, 0, 0);
+            lv_obj_set_style_radius(seg, 0, 0);
+            lv_obj_set_style_pad_all(seg, 0, 0);
+            lv_obj_set_scrollbar_mode(seg, LV_SCROLLBAR_MODE_OFF);
+            lv_obj_clear_flag(seg, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_set_pos(seg, c0 * kCell + 1, r * kCell + 1);
         }
     }
-    // 当前方块:4 格各一段(形状不保证同行连续)
-    if (!game_over_) {
-        for (int i = 0; i < 4; i++) {
-            int r = cur_[i][0], c = cur_[i][1];
-            if (r < 0) continue;
-            if (n >= kPoolSize) break;
-            put(r, c, 1, cur_type_ + 1);
+}
+
+// 当前方块:4 个固定尺寸池化格,每帧只挪位置(位置变化渲染正常)
+void TetrisApp::DrawBoard() {
+    for (int i = 0; i < 4; i++) {
+        lv_obj_t* cell = PoolGet(i);
+        if (cell == nullptr) continue;
+        if (game_over_ || cur_[i][0] < 0) {
+            lv_obj_add_flag(cell, LV_OBJ_FLAG_HIDDEN);
+            continue;
         }
-    }
-    for (; n < kPoolSize; n++) {
-        if (cell_pool_[n] != nullptr) {
-            lv_obj_add_flag(cell_pool_[n], LV_OBJ_FLAG_HIDDEN);
-        }
+        lv_obj_clear_flag(cell, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_pos(cell, cur_[i][1] * kCell + 1, cur_[i][0] * kCell + 1);
+        lv_obj_set_style_bg_color(cell, lv_color_hex(kColors[cur_type_ + 1]), 0);
     }
 }
 

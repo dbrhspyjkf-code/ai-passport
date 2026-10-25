@@ -57,11 +57,13 @@ private:
     bool active_ = false;
     uint32_t tick_count_ = 0;
 
-    // 行段池:DrawBoard 把每行"连续同色格子"合并为一条矩形,
-    // 满盘典型 40-80 段(一格一对象的旧画法满盘 ~280 对象 ≈24KB,
-    // 把 free 压到 7K,是 DNS 掉线/bad_alloc 重启的总根因)。
-    // 惰性创建+复用,零运行期建删;段数超池上限时丢弃多余段(仅影响画面)。
-    static const int kPoolSize = 128;
+    // 绘制分两层(2026-10-25 重构,兼顾"改宽度不渲染"坑与内存红线):
+    //  - 锁定格 = DrawBoardSegments() 行程编码段,仅在棋盘变化(落定/消行/
+    //    重开,≤1次/秒)时 clean+重建,段对象"出生即最终宽度";满盘典型
+    //    40-80 段 ≈3-8KB(一格一对象旧画法满盘 ~280 对象 ≈24KB,曾是
+    //    DNS 掉线/bad_alloc 重启总根因)。
+    //  - 当前方块 = DrawBoard() 4 个固定尺寸池化格,每帧只 set_pos。
+    static const int kPoolSize = 4;   // 仅当前方块 4 格
     lv_obj_t* cell_pool_[kPoolSize] = {};
     lv_obj_t* PoolGet(int idx);
 
@@ -70,6 +72,7 @@ private:
     bool Collides(const int cells[4][2], int row_off, int col_off) const;
     void LockPiece();
     int ClearLines();
+    void DrawBoardSegments();
     void RotatePiece();
     void HardDrop();
     void StepDown();
