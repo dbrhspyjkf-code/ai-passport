@@ -1,8 +1,10 @@
 # ESP-IDF Partition Table
+# 单 app 槽布局(2026-10-25):砍掉 ota_1,ota_0 扩到 6.12M——定制固件
+# 只走 USB 直刷,OTA 双槽无意义且官方 OTA 会覆盖定制。nvs/assets 偏移
+# 未动,改布局不丢 WiFi/设置/资产。
 # Name,   Type, SubType, Offset,  Size, Flags
 nvs,      data, nvs,     0x9000,    0x4000,
 otadata,  data, ota,     0xd000,    0x2000,
 phy_init, data, phy,     0xf000,    0x1000,
-ota_0,    app,  ota_0,   0x20000,   0x2f0000,
-ota_1,    app,  ota_1,   ,          0x2f0000,
+ota_0,    app,  ota_0,   0x20000,   0x5E0000,
 assets,   data, spiffs,  0x600000,  2M
