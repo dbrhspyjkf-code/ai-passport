@@ -162,20 +162,17 @@ void OpiApp::Render() {
         snprintf(fanbuf, sizeof(fanbuf), "%d RPM", d.fan_rpm);
         fan = fanbuf;
     }
-    char swap[20] = "";
-    if (d.swap_percent >= 0) snprintf(swap, sizeof(swap), " 交换%d%%", d.swap_percent);
     static char body[280];
     // 每项数据与自己的进度条一组(文字行 + 双空行,条画在首空行处);
-    // 行宽必须 <224px,超宽即折行压条(内存行教训:去"·"分隔符省 32px)
+    // 行宽必须 <224px,超宽即折行压条
     snprintf(body, sizeof(body),
              "负载 %.2f %.2f %.2f\n\n\n"
              "CPU %.1f%%\n\n\n"
-             "内存%.0f%% %.1f/%.1fG%s\n\n\n"
+             "内存%.0f%% %.1f/%.1fG\n\n\n"
              "温度 %.0f°C %s",
              d.load1, d.load5, d.load15,
              d.cpu_percent,
              d.mem_percent, d.mem_used_mb / 1024.0f, d.mem_total_mb / 1024.0f,
-             swap,
              d.cpu_temp_c, fan);
     lv_label_set_text(body_label_, body);
     // 进度条:负载(4 核满载=100%)/CPU/内存

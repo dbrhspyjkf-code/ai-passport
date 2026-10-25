@@ -18,6 +18,7 @@
 #include "agenda_service.h"
 #include "glm_service.h"
 #include "deepseek_service.h"
+#include "opi_service.h"
 #include "lunar_calendar.h"
 #include "weather_service.h"
 #include "mail_app.h"
@@ -180,9 +181,9 @@ void HomeScreen::Create(lv_obj_t* parent, const lv_font_t* font) {
     }, 10000, this);
 
     glm_label_ = lv_label_create(root_);
-    lv_obj_set_style_text_font(glm_label_, &font_home_small_16, 0);
+    lv_obj_set_style_text_font(glm_label_, &font_home_cn_16, 0);   // 全量字体:"智谱"不在 small 子集
     lv_obj_set_style_text_color(glm_label_, lv_color_hex(C_FG), 0);
-    lv_label_set_text(glm_label_, "GLM …");
+    lv_label_set_text(glm_label_, "智谱 GLM …");
     lv_obj_align(glm_label_, LV_ALIGN_TOP_LEFT, 8, 146);
 
     // ---- GLM 右侧:DeepSeek 余额(与右栏日期/天气同轴;y 同 GLM 文本行) ----
@@ -192,6 +193,13 @@ void HomeScreen::Create(lv_obj_t* parent, const lv_font_t* font) {
     lv_obj_set_style_text_color(ds_label_, lv_color_hex(C_FG), 0);
     lv_label_set_text(ds_label_, "DS …");
     lv_obj_align(ds_label_, LV_ALIGN_TOP_MID, 53, 146);
+
+    // ---- GLM 下方:OrangePi 状态(与 GLM 同节奏 5 分钟;hermes /system/status) ----
+    opi_label_ = lv_label_create(root_);
+    lv_obj_set_style_text_font(opi_label_, &font_home_cn_16, 0);
+    lv_obj_set_style_text_color(opi_label_, lv_color_hex(C_FG), 0);
+    lv_label_set_text(opi_label_, "OPi …");
+    lv_obj_align(opi_label_, LV_ALIGN_TOP_LEFT, 8, 166);
 
     // ---- GLM 下方:最近的提醒/行程(hermes /agenda) ----
     // 动态中文文本:全量中文字体(1bpp 16px GB2312 子集不会缺字)
@@ -555,10 +563,10 @@ void HomeScreen::RefreshClock() {
     // GLM 用量(5h 窗口剩余)
     int glm_remaining = GlmService::Get().RemainingPct();
     if (glm_remaining >= 0) {
-        snprintf(buf, sizeof(buf), "GLM  %d%%", glm_remaining);
+        snprintf(buf, sizeof(buf), "智谱 GLM %d%%", glm_remaining);
         lv_label_set_text(glm_label_, buf);
     } else {
-        lv_label_set_text(glm_label_, "GLM …");
+        lv_label_set_text(glm_label_, "智谱 GLM …");
     }
 
     // DeepSeek 余额(GLM 右侧;无数据保持占位)
@@ -568,6 +576,18 @@ void HomeScreen::RefreshClock() {
         lv_label_set_text(ds_label_, buf);
     } else {
         lv_label_set_text(ds_label_, "DS …");
+    }
+
+    // OrangePi 状态(GLM 下方;poller 与 GLM 同节奏拉取,无数据保持占位)
+    {
+        const OpiService::Data& od = OpiService::Get().data();
+        if (od.valid) {
+            snprintf(buf, sizeof(buf), "Opi-CPU%.0f%% 内存%.0f%% 温度%.0f°",
+                     od.cpu_percent, od.mem_percent, od.cpu_temp_c);
+            lv_label_set_text(opi_label_, buf);
+        } else {
+            lv_label_set_text(opi_label_, "Opi …");
+        }
     }
 
     // 最近的提醒/行程

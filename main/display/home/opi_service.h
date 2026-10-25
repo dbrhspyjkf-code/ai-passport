@@ -4,7 +4,8 @@
 // GET {base}/system/status → {"ok":true,"host":{...},"load":{...},
 //   "memory":{...},"disk":[{...}],"thermal":{...}}
 // 同一端点亦服务 Mac Übersicht 桌面 widget(orange-pi.widget)。
-// 仅按需拉取:APP 打开/OK 刷新时经 poller force 路径执行,无后台周期。
+// 拉取时机:主页状态行随 GLM 节奏(5 分钟,poller);OrangePi APP
+// 打开/OK 时经 force 路径立即拉取。
 
 #include <atomic>
 #include <string>

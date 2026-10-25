@@ -194,6 +194,9 @@ void Poller::Loop() {
             // DeepSeek 余额:与 GLM 同节奏(同服务器,5 分钟)
             Beat();
             ds_ok = DeepseekService::Get().Poll();
+            // OrangePi 状态:主页状态行与 GLM 同节奏
+            Beat();
+            OpiService::Get().Poll();
         }
         // 邮件未读:独立 2 分钟节奏(独立服务 8768);手动刷新时立即执行
         if (force_mail || now - s_last_mail >= 2) {
