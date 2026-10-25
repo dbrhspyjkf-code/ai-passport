@@ -1,4 +1,4 @@
-// games_app.cc —— 娱乐文件夹选择屏实现(方块/Flappy)。
+// games_app.cc —— 娱乐文件夹选择屏实现(方块/Flappy/答案之书)。
 #include "games_app.h"
 
 LV_FONT_DECLARE(font_home_cn_16);
@@ -53,8 +53,8 @@ void GamesApp::Create(lv_obj_t* parent) {
     lv_label_set_text(title, "娱乐");
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 24);
 
-    // 两个条目行(图标左,名称+最高分右);屏 240×320,两行垂直居中偏上
-    static const char* kNames[kGameCount] = {"俄罗斯方块", "FLAPPY BIRD"};
+    // 三个条目行(图标左,名称+副题右)
+    static const char* kNames[kGameCount] = {"俄罗斯方块", "FLAPPY BIRD", "答案之书"};
     for (int i = 0; i < kGameCount; i++) {
         lv_obj_t* row = lv_obj_create(root_);
         lv_obj_set_size(row, 208, 60);
@@ -65,7 +65,7 @@ void GamesApp::Create(lv_obj_t* parent) {
         lv_obj_set_style_pad_all(row, 0, 0);
         lv_obj_set_scrollbar_mode(row, LV_SCROLLBAR_MODE_OFF);
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_align(row, LV_ALIGN_TOP_MID, 0, 104 + i * 80);
+        lv_obj_align(row, LV_ALIGN_TOP_MID, 0, 64 + i * 72);
         rows_[i] = row;
 
         lv_obj_t* name = lv_label_create(row);
@@ -97,6 +97,12 @@ void GamesApp::Create(lv_obj_t* parent) {
     lv_obj_set_pos(beak, 40, 29);
     lv_obj_t* eye = mk_rect(rows_[1], 4, 4, 0x0a1f14);
     lv_obj_set_pos(eye, 34, 26);
+    // 行图标 2:答案之书 "书"字(与原启动栏图标同款,青色)
+    lv_obj_t* book = lv_label_create(rows_[2]);
+    lv_obj_set_style_text_font(book, &font_home_cn_16, 0);
+    lv_obj_set_style_text_color(book, lv_color_hex(0x8ae0f7), 0);
+    lv_label_set_text(book, "书");
+    lv_obj_set_pos(book, 24, 22);
 
     // 底部按键提示
     lv_obj_t* hint = lv_label_create(root_);
@@ -114,6 +120,7 @@ void GamesApp::RefreshScores() {
     lv_label_set_text_fmt(score_labels_[0], "最高 %d", hi);
     {   Settings st("flappy", false); hi = st.GetInt("highscore", 0); }
     lv_label_set_text_fmt(score_labels_[1], "最高 %d", hi);
+    lv_label_set_text(score_labels_[2], "随机一句答案");
 }
 
 void GamesApp::Highlight() {
@@ -137,8 +144,8 @@ void GamesApp::HandleKey(int key) {
             sel_ = (sel_ + 1) % kGameCount;
             Highlight();
             break;
-        case 2:   // OK:进入选中游戏(SwitchApp 会销毁本文件夹)
-            HomeScreen::Get().SwitchApp(6 + sel_);   // 6=方块 7=Flappy 8=收音机
+        case 2:   // OK:进入选中项(SwitchApp 会销毁本文件夹)
+            HomeScreen::Get().SwitchApp(sel_ == 2 ? 2 : 6 + sel_);   // 6=方块 7=Flappy 2=答案之书
             break;
         default:
             break;

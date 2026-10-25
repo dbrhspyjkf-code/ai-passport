@@ -236,13 +236,11 @@ void HomeScreen::Create(lv_obj_t* parent, const lv_font_t* font) {
     lv_obj_clear_flag(divider, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_align(divider, LV_ALIGN_BOTTOM_MID, 0, -31);   // 文字在横线与屏底间垂直居中
 
-    launcher_items_[0] = lv_obj_create(root_);   // 金融
-    launcher_items_[1] = lv_obj_create(root_);   // Email
-    launcher_items_[2] = lv_obj_create(root_);   // 答案之书
-    launcher_items_[3] = lv_obj_create(root_);   // 播放器(Sonos+HomePod)
-    launcher_items_[4] = lv_obj_create(root_);   // 计时器
-    launcher_items_[5] = lv_obj_create(root_);   // 娱乐文件夹
-    launcher_items_[6] = lv_obj_create(root_);   // AI 新闻
+    // 槽位:0 金融 1 邮件 2 播放文件夹 3 计时 4 娱乐文件夹 5 AI 新闻
+    // (答案之书 2026-10-25 移入娱乐文件夹,不再占启动栏)
+    for (int i = 0; i < kLauncherCount; i++) {
+        launcher_items_[i] = lv_obj_create(root_);
+    }
     for (int i = 0; i < kLauncherCount; i++) {
         lv_obj_set_size(launcher_items_[i], 32, 32);
         lv_obj_set_style_bg_color(launcher_items_[i], lv_color_hex(C_BG), 0);
@@ -252,7 +250,7 @@ void HomeScreen::Create(lv_obj_t* parent, const lv_font_t* font) {
         lv_obj_set_style_pad_all(launcher_items_[i], 0, 0);
         lv_obj_set_scrollbar_mode(launcher_items_[i], LV_SCROLLBAR_MODE_OFF);
         lv_obj_clear_flag(launcher_items_[i], LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_pos(launcher_items_[i], 2 + i * 34, 248);   // 7 格 32px(240 宽排满)
+        lv_obj_set_pos(launcher_items_[i], 4 + i * 40, 248);   // 6 格 32px,40px 间距居中
     }
     {   // 金融:K 线蜡烛图(6 根,左下→右上上升,红绿混合)
         auto px = [&](int x, int y, int w, int h, uint32_t color) {
@@ -293,23 +291,15 @@ void HomeScreen::Create(lv_obj_t* parent, const lv_font_t* font) {
         lv_label_set_text(e, MATERIAL_SYMBOLS_MAIL);
         lv_obj_center(e);
     }
-    {   // 游戏文件夹图标:手柄(Material Symbols,橙;方块 L 形图标移入文件夹页)
-        lv_obj_t* gp = lv_label_create(launcher_items_[5]);
+    {   // 娱乐文件夹图标:手柄(Material Symbols,橙;方块 L 形图标移入文件夹页)
+        lv_obj_t* gp = lv_label_create(launcher_items_[4]);
         lv_obj_set_style_text_font(gp, &font_material_symbols_20_4, 0);
         lv_obj_set_style_text_color(gp, lv_color_hex(0xf5a263), 0);
         lv_label_set_text(gp, MATERIAL_SYMBOLS_SPORTS_ESPORTS);
         lv_obj_center(gp);
     }
-    {   // 答案之书图标:"书"字(全量字体,青色)
-        lv_obj_t* book = lv_label_create(launcher_items_[2]);
-        lv_obj_set_style_text_font(book, &font_home_cn_16, 0);
-        lv_obj_set_style_text_color(book, lv_color_hex(0x8ae0f7), 0);
-        lv_label_set_text(book, "书");
-        lv_obj_center(book);
-    }
-
-    {   // 播放器图标:♪(Material Symbols 音符)
-        lv_obj_t* note = lv_label_create(launcher_items_[3]);
+    {   // 播放文件夹图标:♪(Material Symbols 音符)
+        lv_obj_t* note = lv_label_create(launcher_items_[2]);
         lv_obj_set_style_text_font(note, &font_material_symbols_20_4, 0);
         lv_obj_set_style_text_color(note, lv_color_hex(C_FG), 0);
         lv_label_set_text(note, MATERIAL_SYMBOLS_MUSIC_NOTE);
@@ -317,7 +307,7 @@ void HomeScreen::Create(lv_obj_t* parent, const lv_font_t* font) {
     }
 
     {   // 计时器图标:"计"字
-        lv_obj_t* tm = lv_label_create(launcher_items_[4]);
+        lv_obj_t* tm = lv_label_create(launcher_items_[3]);
         lv_obj_set_style_text_font(tm, &font_home_cn_16, 0);
         lv_obj_set_style_text_color(tm, lv_color_hex(C_FG), 0);
         lv_label_set_text(tm, "计");
@@ -325,7 +315,7 @@ void HomeScreen::Create(lv_obj_t* parent, const lv_font_t* font) {
     }
 
     {   // AI 新闻图标:"闻"字(青)
-        lv_obj_t* nw = lv_label_create(launcher_items_[6]);
+        lv_obj_t* nw = lv_label_create(launcher_items_[5]);
         lv_obj_set_style_text_font(nw, &font_home_cn_16, 0);
         lv_obj_set_style_text_color(nw, lv_color_hex(0x8ae0f7), 0);
         lv_label_set_text(nw, "闻");
@@ -344,7 +334,7 @@ void HomeScreen::Create(lv_obj_t* parent, const lv_font_t* font) {
 }
 
 void HomeScreen::LauncherHighlight() {
-    static const char* kNames[7] = {"金融", "邮件", "答案", "播放", "计时", "娱乐", "新闻"};
+    static const char* kNames[kLauncherCount] = {"金融", "邮件", "播放", "计时", "娱乐", "新闻"};
     for (int i = 0; i < kLauncherCount; i++) {
         if (launcher_items_[i] == nullptr) continue;
         lv_obj_set_style_border_color(launcher_items_[i],
@@ -358,10 +348,10 @@ void HomeScreen::LauncherHighlight() {
 }
 
 void HomeScreen::SwitchApp(int idx) {
-    // APP 索引:0=金融 1=邮件 2=答案 3=播放器(Sonos/HomePod) 4=计时,
+    // APP 索引:0=金融 1=邮件 2=答案之书 3=播放器(Sonos/HomePod) 4=计时,
     // 5=娱乐文件夹,6=方块,7=Flappy,8=收音机,9=AI新闻,10=播放文件夹
-    // (3/8 由播放文件夹进入;6/7 由娱乐文件夹进入;10=启动栏第 4 格;
-    //  9=启动栏第 7 格;current_app_ 记真实占用者)
+    // (3/8 由播放文件夹进入;2/6/7 由娱乐文件夹进入;启动栏 6 格见
+    //  HandleLauncherKey 的 kSlotApp;current_app_ 记真实占用者)
     // 已退出(Leave 后 active_=false)的同一 APP 允许重新进入
     if (idx == current_app_) {
         bool alive = false;
@@ -478,11 +468,12 @@ bool HomeScreen::HandleLauncherKey(int key) {
             LauncherHighlight();
             return true;
         case 2:   // OK:进入选中 APP(切换时销毁上一个,同时最多 1 个 APP 对象)
-            // 启动栏槽位 → APP 索引:第 4 格"播放"=播放文件夹(APP 10),
-            // 第 7 格(新闻)=APP 9;其余槽位同名直进
-            // (播放器 3/收音机 8 由播放文件夹进入;方块/Flappy 由娱乐文件夹进入)
-            SwitchApp(launcher_sel_ == 3 ? 10 :
-                      launcher_sel_ == 6 ? 9 : launcher_sel_);
+            // 启动栏槽位 → APP 索引(播放器 3/收音机 8 由播放文件夹进入;
+            // 方块 6/Flappy 7/答案之书 2 由娱乐文件夹进入)
+            {
+                static const int kSlotApp[kLauncherCount] = {0, 1, 10, 4, 5, 9};
+                SwitchApp(kSlotApp[launcher_sel_]);
+            }
             return true;
         default:
             return false;

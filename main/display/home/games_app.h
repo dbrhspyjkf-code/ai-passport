@@ -1,9 +1,9 @@
 #pragma once
 
-// games_app —— 娱乐文件夹(主页第 6 格"娱乐"):列出小游戏供选择。
-// 上/下=切换选中,OK=进入游戏,长按 OK=返回主页(board 层 Leave)。
-// 进入具体游戏通过 HomeScreen::SwitchApp(6=方块 7=Flappy)。
-// 收音机已移至"播放"文件夹(media_app,2026-10-25)。
+// games_app —— 娱乐文件夹(主页"娱乐"格):方块/Flappy/答案之书入口。
+// 上/下=切换选中,OK=进入,长按 OK=返回主页(board 层 Leave)。
+// 进入通过 HomeScreen::SwitchApp(6=方块 7=Flappy 2=答案之书)。
+// 收音机已移至"播放"文件夹;答案之书 2026-10-25 从启动栏移入此处。
 
 #include <stdint.h>
 
@@ -27,7 +27,7 @@ public:
 private:
     GamesApp() = default;
 
-    static const int kGameCount = 2;   // 0=俄罗斯方块 1=Flappy Bird
+    static const int kGameCount = 3;   // 0=俄罗斯方块 1=Flappy Bird 2=答案之书
 
     lv_obj_t* root_ = nullptr;
     lv_obj_t* rows_[kGameCount] = {};
