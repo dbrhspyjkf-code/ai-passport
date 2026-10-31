@@ -26,6 +26,91 @@ static constexpr int kCoverSize = 64;   // 与 hermes _cover_art._SIZE 同步(�
 static constexpr int kCoverPaletteBytes = 256 * 4;
 static constexpr int kCoverDataBytes = kCoverPaletteBytes + (kCoverSize * kCoverSize);
 
+// 歌词代理 = radio_relay 同机同端口(radio_app kStations 同款硬编码)
+static const char* kRelayBase = "http://192.168.1.200:8769";
+
+// 百分号编码(HA 曲名/歌手为原始 UTF-8,需转义进 query)
+static void url_encode(const char* in, char* out, size_t cap) {
+    static const char hex[] = "0123456789ABCDEF";
+    size_t o = 0;
+    for (const unsigned char* p = (const unsigned char*)in; *p != '\0' && o + 3 < cap; p++) {
+        unsigned char c = *p;
+        if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            c == '-' || c == '_' || c == '.' || c == '~') {
+            out[o++] = (char)c;
+        } else {
+            out[o++] = '%';
+            out[o++] = hex[c >> 4];
+            out[o++] = hex[c & 0xF];
+        }
+    }
+    out[o] = '\0';
+}
+
+// 码点写 UTF-8(歌词 JSON 反转义用);缓冲不足返回 false 由调用方截断
+static bool utf8_put(char** dst, char* end, uint32_t cp) {
+    if (cp < 0x80) {
+        if (*dst >= end) return false;
+        *(*dst)++ = (char)cp;
+        return true;
+    }
+    if (cp < 0x800) {
+        if (end - *dst < 2) return false;
+        *(*dst)++ = (char)(0xC0 | (cp >> 6));
+        *(*dst)++ = (char)(0x80 | (cp & 0x3F));
+        return true;
+    }
+    if (cp < 0x10000) {
+        if (end - *dst < 3) return false;
+        *(*dst)++ = (char)(0xE0 | (cp >> 12));
+        *(*dst)++ = (char)(0x80 | ((cp >> 6) & 0x3F));
+        *(*dst)++ = (char)(0x80 | (cp & 0x3F));
+        return true;
+    }
+    if (end - *dst < 4) return false;
+    *(*dst)++ = (char)(0xF0 | (cp >> 18));
+    *(*dst)++ = (char)(0x80 | ((cp >> 12) & 0x3F));
+    *(*dst)++ = (char)(0x80 | ((cp >> 6) & 0x3F));
+    *(*dst)++ = (char)(0x80 | (cp & 0x3F));
+    return true;
+}
+
+// LRC 时间标签 [mm:ss.ff] 手工解析(不用 sscanf %f——本项目有 %f 前科);
+// 顺带拒绝 [ti:]/[ar:]/[offset:] 等元数据标签(非数字/含字母即 false)
+static bool parse_lrc_time(const char* s, const char* e, float* out) {
+    int mm = 0, ss = 0;
+    const char* p = s;
+    while (p < e && *p >= '0' && *p <= '9') {
+        mm = mm * 10 + (*p - '0');
+        if (mm > 199) return false;
+        p++;
+    }
+    if (p == s || p >= e || *p != ':') return false;
+    p++;
+    const char* ss_start = p;
+    while (p < e && *p >= '0' && *p <= '9') {
+        ss = ss * 10 + (*p - '0');
+        if (ss > 99) return false;
+        p++;
+    }
+    if (p == ss_start) return false;
+    float frac = 0;
+    if (p < e && *p == '.') {
+        p++;
+        const char* fs = p;
+        float scale = 0.1f;
+        while (p < e && *p >= '0' && *p <= '9') {
+            frac += (*p - '0') * scale;
+            scale *= 0.1f;
+            p++;
+        }
+        if (p == fs) return false;
+    }
+    if (p != e) return false;
+    *out = mm * 60.0f + ss + frac;
+    return true;
+}
+
 // ---------------- HA HTTP 辅助 ----------------
 
 static bool ha_get(const char* base_url, const char* token, const char* entity_id,
@@ -166,8 +251,9 @@ void PlayerApp::Create(lv_obj_t* parent) {
     // 专辑封面：服务器已转为 LVGL 原生 I8；设备只在 APP 打开后申请 5120B。
     cover_img_ = lv_image_create(root_);
     lv_obj_set_size(cover_img_, kCoverSize, kCoverSize);
-    // TAB 底部(y=40)与标题顶部(~152)之间:64px 封面自 y=56 开始。
-    lv_obj_align(cover_img_, LV_ALIGN_TOP_MID, 0, 56);
+    // 布局(240×320,塞入双行歌词): tab 8-27 / 封面 32-96 / 曲名 102 /
+    // 艺术家 124 / 歌词 166(单行) / 进度条 230 / 时间 242 / 底部帮助
+    lv_obj_align(cover_img_, LV_ALIGN_TOP_MID, 0, 32);
     lv_obj_add_flag(cover_img_, LV_OBJ_FLAG_HIDDEN);
 
     // 状态/曲名/艺术家
@@ -179,9 +265,9 @@ void PlayerApp::Create(lv_obj_t* parent) {
     lv_obj_set_width(title_label_, LV_HOR_RES - 24);
     lv_label_set_long_mode(title_label_, LV_LABEL_LONG_DOT);
     lv_label_set_text(title_label_, "…");
-    lv_obj_align(title_label_, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_align(title_label_, LV_ALIGN_TOP_MID, 0, 102);
 
-    // 演唱者(居中偏下)
+    // 演唱者(曲名下方)
     artist_label_ = lv_label_create(root_);
     lv_obj_set_style_text_font(artist_label_, &font_home_cn_16, 0);
     lv_obj_set_style_text_color(artist_label_, lv_color_hex(0xE8E3D3), 0);
@@ -189,12 +275,22 @@ void PlayerApp::Create(lv_obj_t* parent) {
     lv_obj_set_width(artist_label_, LV_HOR_RES - 24);
     lv_label_set_long_mode(artist_label_, LV_LABEL_LONG_DOT);
     lv_label_set_text(artist_label_, "");
-    lv_obj_align(artist_label_, LV_ALIGN_CENTER, 0, 26);
+    lv_obj_align(artist_label_, LV_ALIGN_TOP_MID, 0, 124);
+
+    // 歌词双行: 当前行亮 + 下一行暗(TickProgress 随播放位置推进)
+    lyric_now_ = lv_label_create(root_);
+    lv_obj_set_style_text_font(lyric_now_, &font_home_cn_16, 0);
+    lv_obj_set_style_text_color(lyric_now_, lv_color_hex(0xE8E3D3), 0);
+    lv_obj_set_style_text_align(lyric_now_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(lyric_now_, LV_HOR_RES - 24);
+    lv_label_set_long_mode(lyric_now_, LV_LABEL_LONG_DOT);
+    lv_label_set_text(lyric_now_, "");
+    lv_obj_align(lyric_now_, LV_ALIGN_TOP_MID, 0, 166);
 
     // 进度条 + 时间(M5-DIAL 同款钟表式推进,500ms timer 平滑)
     pos_bar_ = lv_bar_create(root_);
     lv_obj_set_size(pos_bar_, 200, 4);
-    lv_obj_align(pos_bar_, LV_ALIGN_CENTER, 0, 64);
+    lv_obj_align(pos_bar_, LV_ALIGN_TOP_MID, 0, 230);
     lv_bar_set_range(pos_bar_, 0, 100);
     lv_bar_set_value(pos_bar_, 0, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(pos_bar_, lv_color_hex(0x222A31), 0);
@@ -223,7 +319,7 @@ void PlayerApp::Create(lv_obj_t* parent) {
     lv_obj_set_style_text_font(prog_label_, &font_home_cn_16, 0);
     lv_obj_set_style_text_color(prog_label_, lv_color_hex(0xAAB4BE), 0);
     lv_label_set_text(prog_label_, "");
-            lv_obj_align(prog_label_, LV_ALIGN_CENTER, 0, 80);
+            lv_obj_align(prog_label_, LV_ALIGN_TOP_MID, 0, 242);
 
     // 底部操作说明
     pos_label_ = lv_label_create(root_);
@@ -231,7 +327,7 @@ void PlayerApp::Create(lv_obj_t* parent) {
     lv_obj_set_style_text_color(pos_label_, lv_color_hex(0x8A949E), 0);
     lv_obj_set_style_text_align(pos_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_text(pos_label_, "上下:音量 长按:切歌\n双击OK:切换设备");
-    lv_obj_align(pos_label_, LV_ALIGN_BOTTOM_MID, 0, -16);
+    lv_obj_align(pos_label_, LV_ALIGN_BOTTOM_MID, 0, -8);
     lv_label_set_long_mode(pos_label_, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(pos_label_, LV_HOR_RES - 24);
 
@@ -257,6 +353,11 @@ void PlayerApp::Run() {
     if (cover_data_ == nullptr) {
         cover_data_ = static_cast<uint8_t*>(heap_caps_malloc(kCoverDataBytes, MALLOC_CAP_8BIT));
         if (cover_data_ == nullptr) ESP_LOGW(TAG, "cover buffer prealloc failed (%dB)", kCoverDataBytes);
+    }
+    // 歌词文本缓冲同理(典型一首歌 LRC ≤3KB;分配失败仅无歌词,不致命)
+    if (lyr_buf_ == nullptr) {
+        lyr_buf_ = static_cast<uint8_t*>(heap_caps_malloc(kLyrBufBytes, MALLOC_CAP_8BIT));
+        if (lyr_buf_ == nullptr) ESP_LOGW(TAG, "lyrics buffer prealloc failed (%dB)", kLyrBufBytes);
     }
     for (;;) {
         int c = cmd_.exchange(0);
@@ -304,6 +405,15 @@ void PlayerApp::Run() {
             FetchCover(active_idx);
             cover_retry_due_us_ = esp_timer_get_time() + 2000000;
         }
+        // 切歌/切 tab 的歌词请求(在途不做重试:下一次 title 变化会再触发)
+        if (lyr_requested_.exchange(false)) {
+            FetchLyrics(active_idx);
+        }
+        // 冷查询超时后的同曲重试(FetchLyrics 失败时排定)
+        if (lyr_retry_due_us_ != 0 && esp_timer_get_time() >= lyr_retry_due_us_) {
+            lyr_retry_due_us_ = 0;
+            lyr_requested_.store(true);
+        }
         // Leave/Destroy 可能在 HTTP 期间发生；退出后不再触碰 UI。
         if (!running_.load()) break;
         if (lvgl_port_lock(pdMS_TO_TICKS(1000))) {
@@ -318,6 +428,17 @@ void PlayerApp::Run() {
         if (!running_.load()) break;
     }
     ResetCover();
+    // 歌词缓冲与封面同生命周期:任务收尾释放,不为下一次进入留残量
+    if (lyr_buf_ != nullptr) {
+        heap_caps_free(lyr_buf_);
+        lyr_buf_ = nullptr;
+    }
+    lyr_count_ = 0;
+    lyr_player_ = -1;
+    lyr_key_title_[0] = '\0';
+    lyr_retry_due_us_ = 0;
+    lyr_attempts_ = 0;
+    lyr_attempt_title_[0] = '\0';
     vTaskDelete(NULL);
 }
 
@@ -368,6 +489,19 @@ bool PlayerApp::FetchStatus(int idx) {
                 ps.ha_at_epoch = (double)at;
             }
         }
+        // 时间戳校正(Tab5 同款 HA 标准算法,2026-10-31 歌词错位实锤):
+        // media_position 是 updated_at 时刻的快照,真实值 = position +
+        // (now - updated_at);不校正则校准逻辑反复把进度拽回旧值。
+        // 仅 SNTP 已同步且年龄 [0,300]s 才校正——保留单调钟锚对时钟偏差
+        // 的免疫(设备时钟未同步时 wall clock 减出负数的老坑)。
+        double ha_live = ps.ha_pos;
+        if (ps.ha_at_epoch > 0) {
+            time_t now = time(NULL);
+            if (now > 1767225600) {   // 2026-01-01 之后=SNTP 已同步
+                double age = difftime(now, (time_t)ps.ha_at_epoch);
+                if (age >= 0 && age <= 300) ha_live = ps.ha_pos + age;
+            }
+        }
         // 单调时钟锚(免疫设备/HA 时钟偏差):切歌重置,同曲 pos 前进则校准
         {
             bool title_changed = strcmp(ps.title, ps.last_title) != 0;
@@ -377,7 +511,7 @@ bool PlayerApp::FetchStatus(int idx) {
                     strnlen(ps.picture_url, sizeof(ps.last_picture_url) - 1) + 1);
             int64_t mono = esp_timer_get_time();
             if (title_changed) {
-                ps.display_pos = ps.ha_pos;         // 新歌:从服务端位置起步
+                ps.display_pos = ha_live;        // 新歌:从服务端实时位置起步
                 ps.anchor_us_ = mono;
             } else {
                 // 与"当前实时估算"比较(不是过期的 display_pos——
@@ -386,9 +520,9 @@ bool PlayerApp::FetchStatus(int idx) {
                 if (ps.anchor_us_ > 0 && strcmp(ps.state, "playing") == 0) {
                     live += (double)(mono - ps.anchor_us_) / 1000000.0;
                 }
-                // 服务端位置追上本地估算(±2s)才校准;MA 恒 0 追不上→本地走
-                if (ps.ha_pos >= live - 2.0 && ps.ha_pos <= live + 30.0) {
-                    ps.display_pos = ps.ha_pos;
+                // 服务端实时位置落在本地估算邻域才校准;MA 恒 0 追不上→本地走
+                if (ha_live >= live - 2.0 && ha_live <= live + 30.0) {
+                    ps.display_pos = ha_live;
                     ps.anchor_us_ = mono;
                 }
             }
@@ -399,6 +533,7 @@ bool PlayerApp::FetchStatus(int idx) {
                 cover_retries_left_ = 3;
                 cover_retry_due_us_ = 0;
                 cover_requested_.store(true);
+                if (title_changed) lyr_requested_.store(true);   // 歌词随曲名走
             }
         }
         cJSON_Delete(root);
@@ -474,6 +609,234 @@ void PlayerApp::ResetCover() {
     cover_dsc_ = {};
 }
 
+// ── 歌词: radio_relay /lyrics 的 MA/LRCLIB 代理,流式就地解析 ──
+// 响应 JSON 的 synced 值里中文是 \uXXXX 转义(python json.dumps 默认
+// ensure_ascii),逐块原地反转义(写指针恒≤读指针),"synced" 值闭合即
+// 不再解析(后面的 plain 读走丢弃,只为中继日志干净)。紧凑存储:
+// 行文本压实进 lyr_buf_ 头部 + 升序时间/偏移数组,一首中文歌 ~3KB。
+void PlayerApp::FetchLyrics(int idx) {
+    if (!running_.load() || lyr_buf_ == nullptr) return;
+    PlayerState& ps = st_[idx];
+    // 快照(与 FetchStatus 同任务串行,无竞态)
+    char title[96], artist[64];
+    strlcpy(title, ps.title, sizeof(title));
+    strlcpy(artist, ps.artist, sizeof(artist));
+    // 先失效旧词(旧词"定住"比无词难看;空曲名/失败路径都走这里)
+    if (lvgl_port_lock(pdMS_TO_TICKS(1000))) {
+        lyr_count_ = 0;
+        lyr_idx_ = -1;
+        lvgl_port_unlock();
+    }
+    if (title[0] == '\0') {
+        lyr_retry_due_us_ = 0;
+        return;
+    }
+    if (strcmp(lyr_attempt_title_, title) != 0) {   // 换曲: 重试计数归零
+        strlcpy(lyr_attempt_title_, title, sizeof(lyr_attempt_title_));
+        lyr_attempts_ = 0;
+    }
+    static char et[96 * 3 + 1], ea[64 * 3 + 1];
+    url_encode(title, et, sizeof(et));
+    url_encode(artist, ea, sizeof(ea));
+    int dur_s = ps.dur_min > 0.01f ? (int)(ps.dur_min * 60.0f) : 0;
+    static char url[600];   // 最坏 26 基址+14+288 编码曲名+8+192 编码歌手+18 时长
+    if (dur_s > 0) {
+        snprintf(url, sizeof(url), "%s/lyrics?title=%s&artist=%s&duration=%d",
+                 kRelayBase, et, ea, dur_s);
+    } else {
+        snprintf(url, sizeof(url), "%s/lyrics?title=%s&artist=%s", kRelayBase, et, ea);
+    }
+    esp_http_client_config_t cfg = {};
+    cfg.url = url;
+    cfg.method = HTTP_METHOD_GET;
+    cfg.timeout_ms = 8000;
+    cfg.buffer_size = 512;
+    esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    if (client == nullptr) return;
+
+    // 状态机: stage 0=找 "synced" 键 1=键后过渡(跳:与空白等开引号;容忍
+    // JSON 分隔空格——Python json.dumps 默认输出 "synced": "…",2026-10-31
+    // 实锤旧无空格匹配串全程落空,Tab5(nlohmann 完整解析)正常而本机无词)
+    // 2=值内 3=完成/丢弃。键只可能首个命中——JSON 字符串值内的引号必被
+    // 转义,假匹配不可能。
+    static const char kKey[] = "\"synced\"";
+    int stage = 0;
+    int mp = 0;          // 键匹配进度
+    int esc = 0;         // 0=普通 1=刚见反斜杠 2=收集 \u 十六进制
+    int ucnt = 0;
+    uint32_t uacc = 0;
+    bool have_hi = false;   // \u 代理对高半在途
+    uint32_t hi = 0;
+    char* dst = reinterpret_cast<char*>(lyr_buf_);
+    char* dst_end = dst + kLyrBufBytes - 1;
+    bool ok = false;
+    char chunk[256];
+    if (esp_http_client_open(client, 0) == ESP_OK) {
+        esp_http_client_fetch_headers(client);
+        int n;
+        int discarded = 0;
+        while ((n = esp_http_client_read(client, chunk, sizeof(chunk))) > 0) {
+            if (stage == 3) {   // 值已收完: 丢弃余量(含 plain 字段)
+                discarded += n;
+                if (discarded > 65536) break;
+                continue;
+            }
+            for (int i = 0; i < n; i++) {
+                char c = chunk[i];
+                if (stage == 0) {
+                    if (c == kKey[mp]) {
+                        if (++mp == (int)sizeof(kKey) - 1) stage = 1;
+                    } else {
+                        mp = (c == kKey[0]) ? 1 : 0;
+                    }
+                    continue;
+                }
+                if (stage == 1) {   // 键后过渡: 等 : 空白 与开引号
+                    if (c == ':' || c == ' ' || c == '\t') continue;
+                    if (c == '"') { stage = 2; continue; }   // 开引号: 进值内
+                    // 非 string 值(如 null)——本机无同步词,放弃
+                    stage = 3;
+                    break;
+                }
+                // stage == 2: 值内
+                bool full = false;
+                if (esc == 1) {
+                    esc = 0;
+                    if (c == 'n') full = !utf8_put(&dst, dst_end, '\n');
+                    else if (c == 't') full = !utf8_put(&dst, dst_end, '\t');
+                    else if (c == '"') full = !utf8_put(&dst, dst_end, '"');
+                    else if (c == '\\') full = !utf8_put(&dst, dst_end, '\\');
+                    else if (c == '/') full = !utf8_put(&dst, dst_end, '/');
+                    else if (c == 'u') { esc = 2; ucnt = 0; uacc = 0; }
+                    // r/b/f: 丢弃(\r 行尾本来就要去)
+                } else if (esc == 2) {
+                    int v = (c >= '0' && c <= '9') ? c - '0'
+                          : (c >= 'a' && c <= 'f') ? c - 'a' + 10
+                          : (c >= 'A' && c <= 'F') ? c - 'A' + 10 : -1;
+                    if (v >= 0 && ucnt < 4) {
+                        uacc = (uacc << 4) | (uint32_t)v;
+                        ucnt++;
+                    }
+                    if (ucnt >= 4 || v < 0) {
+                        esc = 0;
+                        uint32_t cp = (v >= 0 && ucnt >= 4) ? uacc : 0xFFFD;
+                        if (cp >= 0xD800 && cp <= 0xDBFF) {          // 高代理
+                            if (have_hi) full = !utf8_put(&dst, dst_end, 0xFFFD);
+                            have_hi = true;
+                            hi = cp;
+                        } else if (cp >= 0xDC00 && cp <= 0xDFFF) {   // 低代理
+                            if (have_hi) {
+                                uint32_t c32 = 0x10000 + ((hi - 0xD800) << 10) + (cp - 0xDC00);
+                                full = !utf8_put(&dst, dst_end, c32);
+                                have_hi = false;
+                            } else {
+                                full = !utf8_put(&dst, dst_end, 0xFFFD);
+                            }
+                        } else {
+                            if (have_hi) { full = !utf8_put(&dst, dst_end, 0xFFFD); have_hi = false; }
+                            if (cp >= 0x20) full = !utf8_put(&dst, dst_end, cp);
+                        }
+                    }
+                } else if (c == '\\') {
+                    esc = 1;
+                } else if (c == '"') {
+                    stage = 3;   // 值闭合
+                    ok = true;
+                    break;
+                } else {
+                    full = !utf8_put(&dst, dst_end, (unsigned char)c);
+                }
+                if (full) {   // 缓冲满: 截断收词(比整首丢弃好)
+                    stage = 2;
+                    ok = true;
+                    break;
+                }
+            }
+        }
+    } else {
+        ESP_LOGW(TAG, "lyrics open failed");
+    }
+    esp_http_client_close(client);
+    esp_http_client_cleanup(client);
+    if (!ok || !running_.load()) {
+        if (ok) ESP_LOGW(TAG, "lyrics fetch aborted (leaving)");
+        else ESP_LOGI(TAG, "lyrics p%d '%.32s': none (try %d)", idx, title, lyr_attempts_ + 1);
+        // 冷查询偶发超时: 20s 后再试(中继缓存已热,二次秒回),最多 3 次
+        if (lyr_attempts_ < 3) {
+            lyr_attempts_++;
+            lyr_retry_due_us_ = esp_timer_get_time() + 20000000;
+        } else {
+            lyr_retry_due_us_ = 0;
+        }
+        return;
+    }
+    *dst = '\0';
+
+    // LRC 行抽取: 就地把行文本前移压实(写区恒在已读区之内——每行存走的
+    // 字节 ≤ 该行原始长度,累积不等式保证不覆盖未读内容);同行多时间戳
+    // 展开为多条共享同一偏移;插入排序保升序稳定(LRCLIB 偶有乱序多标签)
+    float ts[kMaxLyrLines];
+    uint16_t offs[kMaxLyrLines];
+    int cnt = 0;
+    uint16_t tlen = 0;
+    char* line = reinterpret_cast<char*>(lyr_buf_);
+    while (*line != '\0' && cnt < kMaxLyrLines) {
+        char* eol = strchr(line, '\n');
+        if (eol != nullptr) *eol = '\0';
+        float times[8];
+        int nt = 0;
+        char* q = line;
+        while (*q == '[' && nt < 8) {
+            char* cl = strchr(q, ']');
+            if (cl == nullptr) break;
+            float t;
+            if (parse_lrc_time(q + 1, cl, &t)) {
+                times[nt++] = t;
+                q = cl + 1;
+            } else {
+                break;   // [ti:]/[offset:] 等元数据标签: 整行放弃
+            }
+        }
+        if (nt > 0) {
+            char* e = q + strlen(q);
+            while (e > q && (e[-1] == ' ' || e[-1] == '\t')) *--e = '\0';
+            size_t tl = strlen(q);   // 空文本=前奏空白标记,也占位(到点清屏)
+            if ((uint32_t)tlen + tl + 1 <= kLyrBufBytes) {
+                uint16_t off = tlen;
+                char* dstp = reinterpret_cast<char*>(lyr_buf_) + tlen;
+                if (dstp != q) memmove(dstp, q, tl + 1);
+                for (int k = 0; k < nt && cnt < kMaxLyrLines; k++) {
+                    int j = cnt;
+                    while (j > 0 && ts[j - 1] > times[k] + 0.001f) {
+                        ts[j] = ts[j - 1];
+                        offs[j] = offs[j - 1];
+                        j--;
+                    }
+                    ts[j] = times[k];
+                    offs[j] = off;
+                    cnt++;
+                }
+                tlen += (uint16_t)(tl + 1);
+            }
+        }
+        if (eol == nullptr) break;
+        line = eol + 1;
+    }
+    if (cnt > 0 && lvgl_port_lock(pdMS_TO_TICKS(1000))) {
+        memcpy(lyr_t_, ts, sizeof(float) * cnt);
+        memcpy(lyr_off_, offs, sizeof(uint16_t) * cnt);
+        strlcpy(lyr_key_title_, title, sizeof(lyr_key_title_));
+        lyr_player_ = idx;
+        lyr_count_ = cnt;
+        lvgl_port_unlock();
+        lyr_attempts_ = 0;
+        lyr_retry_due_us_ = 0;
+        ESP_LOGI(TAG, "lyrics p%d '%.32s': %d lines", idx, title, cnt);
+    } else if (cnt == 0) {
+        lyr_retry_due_us_ = 0;   // 明确无词: 不重试(中继已负向缓存)
+    }
+}
+
 void PlayerApp::SendCommand(int idx, const char* service) {
     cmd_target_.store(idx);
     (void)service;
@@ -504,6 +867,10 @@ void PlayerApp::SwitchTab(int idx) {
     cover_retries_left_ = 3;
     cover_retry_due_us_ = 0;
     cover_requested_.store(true);
+    // 歌词同理: 旧 tab 的词立即清,新 tab 的词由 Run 循环补拉
+    if (lyric_now_ != nullptr) lv_label_set_text(lyric_now_, "");
+    lyr_idx_ = -1;
+    lyr_requested_.store(true);
     UpdateUi();
 }
 
@@ -544,6 +911,26 @@ void PlayerApp::TickProgress() {
     lv_label_set_text_fmt(prog_label_, "%d:%02d / %d:%02d",
                           (int)(cur / 60), (int)cur % 60,
                           (int)ps.dur_min, (int)(ps.dur_min * 60) % 60);
+
+    // 歌词双行推进(与进度同源 cur;tab+曲名校验防串词,seek 双向都免疫
+    // ——每轮从头线性扫,96 行 float 比较开销可忽略)
+    if (lyric_now_ == nullptr) return;
+    if (lyr_count_ > 0 && lyr_player_ == cur_.load() &&
+        strcmp(lyr_key_title_, ps.title) == 0) {
+        int li = -1;   // 首个时间戳前=前奏,保持空白
+        if (cur >= (double)lyr_t_[0]) {
+            li = 0;
+            while (li + 1 < lyr_count_ && (double)lyr_t_[li + 1] <= cur) li++;
+        }
+        if (li != lyr_idx_) {
+            lyr_idx_ = li;
+            lv_label_set_text(lyric_now_,
+                              li >= 0 ? (const char*)lyr_buf_ + lyr_off_[li] : "");
+        }
+    } else if (lyr_idx_ != -1) {
+        lyr_idx_ = -1;
+        lv_label_set_text(lyric_now_, "");
+    }
 }
 
 void PlayerApp::UpdateUi() {
@@ -572,6 +959,7 @@ void PlayerApp::UpdateUi() {
     if (!ps.valid) {
         lv_label_set_text(title_label_, "连接中…");
         lv_label_set_text(artist_label_, "");
+        if (lyric_now_ != nullptr) lv_label_set_text(lyric_now_, "");
         return;
     }
     const char* state_cn = strcmp(ps.state, "playing") == 0 ? "播放中"
@@ -617,6 +1005,7 @@ void PlayerApp::Destroy() {
             root_ = nullptr;
         }
         cover_img_ = nullptr;
+        lyric_now_ = nullptr;
         lvgl_port_unlock();
     }
 }

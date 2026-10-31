@@ -4,6 +4,8 @@
 // 顶部两个 tab,双击 OK 切换;数据/命令路由到当前播放器。
 // 按键: 短按上/下=音量±5,长按上/下=切歌,OK=播放/暂停,
 //       双击 OK=切 tab,长按 OK=退出(board 层)。
+// 歌词: 切歌时经 radio_relay(8769) /lyrics 代理拉 LRC(MA 主源+LRCLIB
+// 兜底,服务端缓存),TickProgress 按实时位置推进双行(当前亮+下一暗)。
 
 #include <atomic>
 #include <cstdint>
@@ -42,6 +44,7 @@ private:
     void ApplyVolume(int idx, int delta);
     bool FetchCover(int idx);
     void ResetCover();
+    void FetchLyrics(int idx);   // 切歌/切 tab 时拉 LRC(radio_relay /lyrics)
     void UpdateUi();
     void TickProgress();   // 500ms 进度推进(钟表式)
     void SwitchTab(int idx);
@@ -83,6 +86,24 @@ private:
     bool cover_ready_ = false;
     lv_obj_t* title_label_ = nullptr;
     lv_obj_t* artist_label_ = nullptr;
+    lv_obj_t* lyric_now_ = nullptr;    // 歌词当前行(仅一行)
+    // 歌词紧凑存储: 文本堆缓冲 + 升序时间/偏移数组(TickProgress 读,
+    // player 任务写;发布走 lvgl 锁,lyr_count_=0 即失效)
+    static constexpr int kMaxLyrLines = 96;
+    static constexpr int kLyrBufBytes = 3072;
+    uint8_t* lyr_buf_ = nullptr;       // LRC 行文本(进 APP 预分配,退出释放)
+    float lyr_t_[kMaxLyrLines] = {};   // 行起始秒(升序)
+    uint16_t lyr_off_[kMaxLyrLines] = {};  // 行文本在 lyr_buf_ 内偏移
+    int lyr_count_ = 0;
+    int lyr_idx_ = -1;                 // 当前行(-1 无/已清,-2 强制重设)
+    int lyr_player_ = -1;              // 词属于哪个 tab(切 tab 防串词)
+    char lyr_key_title_[96] = {};      // 拉取时的曲名快照(陈旧判据)
+    std::atomic<bool> lyr_requested_{false};
+    // 同曲有限重试(中继冷查询偶发超时后,20s 后再试,最多 3 次;
+    // 二次起中继缓存已热秒回)。仅 player 任务读写。
+    char lyr_attempt_title_[96] = {};
+    int lyr_attempts_ = 0;
+    int64_t lyr_retry_due_us_ = 0;
     lv_obj_t* vol_label_ = nullptr;
     lv_obj_t* pos_bar_ = nullptr;
     lv_obj_t* pos_label_ = nullptr;
