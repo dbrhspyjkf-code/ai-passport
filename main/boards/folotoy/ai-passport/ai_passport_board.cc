@@ -20,6 +20,8 @@
 #include "display/home/news_app.h"
 #include "display/home/tools_app.h"
 #include "display/home/opi_app.h"
+#include "display/home/health_app.h"
+#include "display/home/theme.h"
 #include "display/idle_dim.h"
 #include "esp_lvgl_port.h"
 #include "ssid_manager.h"
@@ -234,6 +236,8 @@ private:
                 }
                 auto& opiU = OpiApp::Get();
                 if (opiU.Active()) return;   // OrangePi:UP/DOWN 无功能,消费
+                auto& healthU = HealthApp::Get();
+                if (healthU.Active()) return;   // 健康:UP/DOWN 无功能,消费
                 auto& timerU = TimerApp::Get();
                 if (timerU.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
@@ -278,10 +282,15 @@ private:
                     }
                     return;
                 }
-                // APP=退出即销毁(释放常驻内存);无 APP=音量100
+                // APP=退出即销毁(释放常驻内存);无 APP=一键换主题
                 if (HomeScreen::Get().ExitCurrentApp()) return;
-                GetAudioCodec()->SetOutputVolume(100);
-                GetDisplay()->ShowNotification(Lang::Strings::MAX_VOLUME);
+                {
+                    const char* tn = theme::cycle();
+                    HomeScreen::Get().RebuildTheme();
+                    char msg[32];
+                    snprintf(msg, sizeof(msg), "主题: %s", tn);
+                    GetDisplay()->ShowNotification(msg);
+                }
             });
         });
 
@@ -363,6 +372,8 @@ private:
                 }
                 auto& opiD = OpiApp::Get();
                 if (opiD.Active()) return;   // OrangePi:UP/DOWN 无功能,消费
+                auto& healthD = HealthApp::Get();
+                if (healthD.Active()) return;   // 健康:UP/DOWN 无功能,消费
                 auto& timerD = TimerApp::Get();
                 if (timerD.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
@@ -529,6 +540,14 @@ private:
                 if (opiOK.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
                         opiOK.HandleKey(2);   // OrangePi:刷新
+                        lvgl_port_unlock();
+                    }
+                    return;
+                }
+                auto& healthOK = HealthApp::Get();
+                if (healthOK.Active()) {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        healthOK.HandleKey(2);   // 健康:刷新
                         lvgl_port_unlock();
                     }
                     return;

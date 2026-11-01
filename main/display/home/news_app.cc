@@ -1,6 +1,7 @@
 // news_app —— AI 新闻查看器实现。
 // 数据来自 NewsService(hermes /news/ai,源头 OrangePi cron 午报文件)。
 
+#include "theme.h"
 #include "news_app.h"
 
 #include <cstdio>
@@ -21,7 +22,7 @@ void NewsApp::Create(lv_obj_t* parent) {
 
     root_ = lv_obj_create(parent);
     lv_obj_set_size(root_, LV_HOR_RES, LV_VER_RES);
-    lv_obj_set_style_bg_color(root_, lv_color_hex(0x101418), 0);
+    lv_obj_set_style_bg_color(root_, lv_color_hex(theme::bg()), 0);
     lv_obj_set_style_border_width(root_, 0, 0);
     lv_obj_set_style_pad_all(root_, 8, 0);
     lv_obj_set_style_radius(root_, 0, 0);
@@ -31,7 +32,7 @@ void NewsApp::Create(lv_obj_t* parent) {
     // 日期头(左上,灰)
     date_label_ = lv_label_create(root_);
     lv_obj_set_style_text_font(date_label_, &font_home_cn_16, 0);
-    lv_obj_set_style_text_color(date_label_, lv_color_hex(0x6B7683), 0);
+    lv_obj_set_style_text_color(date_label_, lv_color_hex(theme::dim()), 0);
     lv_label_set_text(date_label_, "");
     lv_obj_align(date_label_, LV_ALIGN_TOP_LEFT, 0, 4);
 
@@ -63,7 +64,7 @@ void NewsApp::Create(lv_obj_t* parent) {
     // 正文(白,自动换行;单条≤120 字≈6 行,长文裁剪)
     body_label_ = lv_label_create(root_);
     lv_obj_set_style_text_font(body_label_, &font_home_cn_16, 0);
-    lv_obj_set_style_text_color(body_label_, lv_color_hex(0xE8E3D3), 0);
+    lv_obj_set_style_text_color(body_label_, lv_color_hex(theme::fg()), 0);
     lv_obj_set_width(body_label_, LV_HOR_RES - 16);
     lv_obj_set_height(body_label_, 220);
     lv_label_set_long_mode(body_label_, LV_LABEL_LONG_WRAP);
@@ -73,7 +74,7 @@ void NewsApp::Create(lv_obj_t* parent) {
     // 底部按键提示
     hint_label_ = lv_label_create(root_);
     lv_obj_set_style_text_font(hint_label_, &font_home_cn_16, 0);
-    lv_obj_set_style_text_color(hint_label_, lv_color_hex(0x6B7683), 0);
+    lv_obj_set_style_text_color(hint_label_, lv_color_hex(theme::dim()), 0);
     lv_label_set_text(hint_label_, "上下翻阅 · OK刷新 · 长按退出");
     lv_obj_align(hint_label_, LV_ALIGN_BOTTOM_MID, 0, -6);
 

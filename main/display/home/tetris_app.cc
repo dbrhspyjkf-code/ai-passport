@@ -1,5 +1,6 @@
 // tetris_app.cc —— 俄罗斯方块实现。
 // 渲染用矩形拼块(每格一个 10x10 rect 居中于 12px 格,留 1px 缝,像素感)。
+#include "theme.h"
 #include "tetris_app.h"
 
 LV_FONT_DECLARE(font_home_cn_16);
@@ -29,10 +30,10 @@ static const uint32_t kColors[8] = {
     0xf5f5f5,     // 7 白
 };
 
-#define C_BG 0x0a1f14
-#define C_FG 0xb7f5c4
-#define C_DIM 0x4f7a5e
-#define C_HINT 0x34573f
+#define C_BG theme::bg()
+#define C_FG theme::fg()
+#define C_DIM theme::dim()
+#define C_HINT theme::hint()
 
 // 7 种方块的 4 格初始坐标(以 2x4/3x3 定义域)与 SRS 出生位置
 struct PieceDef {

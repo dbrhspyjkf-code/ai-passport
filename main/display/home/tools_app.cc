@@ -1,4 +1,5 @@
 // tools_app.cc —— 工具文件夹选择屏实现(新闻/OrangePi)。
+#include "theme.h"
 #include "tools_app.h"
 
 LV_FONT_DECLARE(font_home_cn_16);
@@ -10,10 +11,10 @@ LV_FONT_DECLARE(font_home_cn_16);
 #include "esp_lvgl_port.h"
 
 // 深蓝工具风(区别于娱乐文件夹的墨绿)
-#define C_BG 0x0a1622
-#define C_FG 0x9fd8e8
-#define C_DIM 0x46647a
-#define C_HINT 0x2f4657
+#define C_BG theme::bg()
+#define C_FG theme::fg()
+#define C_DIM theme::dim()
+#define C_HINT theme::hint()
 
 ToolsApp& ToolsApp::Get() {
     static ToolsApp instance;
@@ -39,20 +40,20 @@ void ToolsApp::Create(lv_obj_t* parent) {
     lv_label_set_text(title, "工具");
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 24);
 
-    // 两个条目行(图标左,名称+说明右)
-    static const char* kNames[kToolCount] = {"AI 新闻", "ORANGEPI"};
-    static const char* kSubs[kToolCount] = {"每天中午更新", "系统状态监控"};
+    // 三个条目行(图标左,名称+说明右)
+    static const char* kNames[kToolCount] = {"AI 新闻", "ORANGEPI", "健康"};
+    static const char* kSubs[kToolCount] = {"每天中午更新", "系统状态监控", "iPhone 健康数据"};
     for (int i = 0; i < kToolCount; i++) {
         lv_obj_t* row = lv_obj_create(root_);
         lv_obj_set_size(row, 208, 60);
         lv_obj_set_style_bg_color(row, lv_color_hex(0x081120), 0);
         lv_obj_set_style_border_color(row, lv_color_hex(C_DIM), 0);
         lv_obj_set_style_border_width(row, 1, 0);
-        lv_obj_set_style_radius(row, 0, 0);
+        lv_obj_set_style_radius(row, 6, 0);   // 轻微圆角(与娱乐文件夹一致)
         lv_obj_set_style_pad_all(row, 0, 0);
         lv_obj_set_scrollbar_mode(row, LV_SCROLLBAR_MODE_OFF);
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_align(row, LV_ALIGN_TOP_MID, 0, 84 + i * 88);
+        lv_obj_align(row, LV_ALIGN_TOP_MID, 0, 60 + i * 80);
         rows_[i] = row;
 
         lv_obj_t* name = lv_label_create(row);
@@ -109,6 +110,25 @@ void ToolsApp::Create(lv_obj_t* parent) {
         lv_obj_set_pos(pin2, 19 + p * 7, 42);
     }
 
+    // 行图标 2:健康心形(红,两圆角块+旋转方块拼合)
+    {
+        auto mk = [](lv_obj_t* parent, int w, int h, uint32_t color, int x, int y) {
+            lv_obj_t* r = lv_obj_create(parent);
+            lv_obj_set_size(r, w, h);
+            lv_obj_set_style_bg_color(r, lv_color_hex(color), 0);
+            lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_width(r, 0, 0);
+            lv_obj_set_style_radius(r, 5, 0);
+            lv_obj_set_style_pad_all(r, 0, 0);
+            lv_obj_set_scrollbar_mode(r, LV_SCROLLBAR_MODE_OFF);
+            lv_obj_clear_flag(r, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_set_pos(r, x, y);
+        };
+        mk(rows_[2], 14, 12, 0xFF3B30, 18, 20);    // 左半圆
+        mk(rows_[2], 14, 12, 0xFF3B30, 32, 20);    // 右半圆
+        mk(rows_[2], 26, 14, 0xFF3B30, 19, 28);    // 下部方块
+    }
+
     // 底部按键提示
     lv_obj_t* hint = lv_label_create(root_);
     lv_obj_set_style_text_font(hint, &font_home_cn_16, 0);
@@ -141,7 +161,7 @@ void ToolsApp::HandleKey(int key) {
             Highlight();
             break;
         case 2:   // OK:进入选中工具(SwitchApp 会销毁本文件夹)
-            HomeScreen::Get().SwitchApp(sel_ == 0 ? 9 : 12);   // 9=新闻 12=OrangePi
+            HomeScreen::Get().SwitchApp(sel_ == 0 ? 9 : sel_ == 1 ? 12 : 13);   // 9=新闻 12=OrangePi 13=健康
             break;
         default:
             break;

@@ -4,6 +4,7 @@
 // 字体:名字用小智内置中文字体;次级文本用 16px 子集字体;点阵时钟独立字体。
 //
 // 个人信息(名字/签名/城市/坐标)在本文件顶部常量区,改完重编译即可。
+#include "theme.h"
 #include "home_screen.h"
 
 #include "material_symbols.h"
@@ -25,6 +26,7 @@
 #include "news_app.h"
 #include "tools_app.h"
 #include "opi_app.h"
+#include "health_app.h"
 #include "finance_app.h"
 #include "tetris_app.h"
 #include "flappy_app.h"
@@ -42,10 +44,10 @@
 #define HOME_TITLE "PASSPORT"
 
 // ---------------- 配色 ----------------
-#define C_BG 0x0a1f14      // 深墨绿底
-#define C_FG 0xb7f5c4      // 荧光绿主前景
-#define C_DIM 0x4f7a5e     // 次级暗绿
-#define C_HINT 0x34573f
+#define C_BG theme::bg()
+#define C_FG theme::fg()
+#define C_DIM theme::dim()
+#define C_HINT theme::hint()
 #define C_TITLE_X 0x8ae0f7   // 答案之书图标青    // 更暗(按键提示/框线)
 
 // 点阵时钟数字字体(Press Start 2P, OFL;lv_font_conv 生成,24px)
@@ -381,6 +383,7 @@ void HomeScreen::SwitchApp(int idx) {
             case 9: alive = NewsApp::Get().Active(); break;
             case 11: alive = ToolsApp::Get().Active(); break;
             case 12: alive = OpiApp::Get().Active(); break;
+            case 13: alive = HealthApp::Get().Active(); break;
             default: break;
         }
         if (alive) return;   // 确实还在运行,跳过
@@ -402,6 +405,7 @@ void HomeScreen::SwitchApp(int idx) {
                 case 10: MediaApp::Get().Destroy(); break;
                 case 11: ToolsApp::Get().Destroy(); break;
                 case 12: OpiApp::Get().Destroy(); break;
+            case 13: HealthApp::Get().Destroy(); break;
                 default: break;
             }
             lvgl_port_unlock();
@@ -446,6 +450,9 @@ void HomeScreen::SwitchApp(int idx) {
     } else if (idx == 12) {
         OpiApp::Get().Create(parent);
         OpiApp::Get().Enter();
+    } else if (idx == 13) {
+        HealthApp::Get().Create(parent);
+        HealthApp::Get().Enter();
     } else {
         RadioApp::Get().Create(parent);
         RadioApp::Get().Enter();
@@ -472,6 +479,7 @@ bool HomeScreen::ExitCurrentApp() {
             case 10: MediaApp::Get().Destroy(); break;
             case 11: ToolsApp::Get().Destroy(); break;
             case 12: OpiApp::Get().Destroy(); break;
+            case 13: HealthApp::Get().Destroy(); break;
             default: break;
         }
         lvgl_port_unlock();
@@ -502,6 +510,44 @@ bool HomeScreen::HandleLauncherKey(int key) {
             return true;
         default:
             return false;
+    }
+}
+
+void HomeScreen::RebuildTheme() {
+    // 主题切换后重建:删 root 重新 Create(所有子对象随之销毁)
+    if (lvgl_port_lock(pdMS_TO_TICKS(1000))) {
+        if (blink_timer_ != nullptr) {
+            lv_timer_delete(blink_timer_);   // 定时器独立于对象树
+            blink_timer_ = nullptr;
+        }
+        if (mail_blink_ != nullptr) {
+            lv_timer_delete(mail_blink_);
+            mail_blink_ = nullptr;
+        }
+        if (root_ != nullptr) {
+            lv_obj_delete(root_);
+            root_ = nullptr;
+        }
+        // 子指针已随 root 删除,全部置空防悬空
+        clock_label_ = nullptr; date_label_ = nullptr; lunar_label_ = nullptr;
+        mail_label_ = nullptr; app_name_label_ = nullptr;
+        for (int i = 0; i < kLauncherCount; i++) launcher_items_[i] = nullptr;
+        battery_text_ = nullptr; battery_frame_ = nullptr; battery_fill_ = nullptr;
+        weather_line1_ = nullptr; glm_label_ = nullptr; ds_label_ = nullptr;
+        opi_label_ = nullptr; agenda_label_ = nullptr;
+        avatar_img_ = nullptr;
+        visible_ = false;
+        current_app_ = -1;
+        // 重新创建(Create 幂等:root_ == nullptr 时执行)
+        const lv_font_t* font = home_font_ != nullptr ? home_font_ : nullptr;
+        lvgl_port_unlock();
+        if (font != nullptr) {
+            if (lvgl_port_lock(pdMS_TO_TICKS(1000))) {
+                Create(lv_screen_active(), font);
+                Show();
+                lvgl_port_unlock();
+            }
+        }
     }
 }
 

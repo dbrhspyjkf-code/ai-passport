@@ -1,6 +1,7 @@
 // player_app —— Sonos + HomePod 统一播放控制器。见 player_app.h。
 // 逻辑融合自 sonos_app/pod_app(已参数化),保留已验证的进度算法。
 
+#include "theme.h"
 #include "player_app.h"
 
 #include <cstdio>
@@ -232,7 +233,7 @@ void PlayerApp::Create(lv_obj_t* parent) {
     root_ = lv_obj_create(parent);
     lv_obj_set_size(root_, LV_PCT(100), LV_PCT(100));
     lv_obj_center(root_);
-    lv_obj_set_style_bg_color(root_, lv_color_hex(0x101418), 0);
+    lv_obj_set_style_bg_color(root_, lv_color_hex(theme::bg()), 0);
     lv_obj_set_style_border_width(root_, 0, 0);
     lv_obj_set_style_pad_all(root_, 8, 0);
     lv_obj_set_style_radius(root_, 0, 0);
@@ -270,7 +271,7 @@ void PlayerApp::Create(lv_obj_t* parent) {
     // 演唱者(曲名下方)
     artist_label_ = lv_label_create(root_);
     lv_obj_set_style_text_font(artist_label_, &font_home_cn_16, 0);
-    lv_obj_set_style_text_color(artist_label_, lv_color_hex(0xE8E3D3), 0);
+    lv_obj_set_style_text_color(artist_label_, lv_color_hex(theme::fg()), 0);
     lv_obj_set_style_text_align(artist_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_width(artist_label_, LV_HOR_RES - 24);
     lv_label_set_long_mode(artist_label_, LV_LABEL_LONG_DOT);
@@ -280,7 +281,7 @@ void PlayerApp::Create(lv_obj_t* parent) {
     // 歌词双行: 当前行亮 + 下一行暗(TickProgress 随播放位置推进)
     lyric_now_ = lv_label_create(root_);
     lv_obj_set_style_text_font(lyric_now_, &font_home_cn_16, 0);
-    lv_obj_set_style_text_color(lyric_now_, lv_color_hex(0xE8E3D3), 0);
+    lv_obj_set_style_text_color(lyric_now_, lv_color_hex(theme::fg()), 0);
     lv_obj_set_style_text_align(lyric_now_, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_width(lyric_now_, LV_HOR_RES - 24);
     lv_label_set_long_mode(lyric_now_, LV_LABEL_LONG_DOT);

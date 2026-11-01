@@ -2,7 +2,9 @@
 // 设备管线:HTTP 读 PCM → 预缓冲环 → I2S,零解码;服务器端 ffmpeg。
 // UI:88-108MHz 刻度盘+指针扫动(lv_anim);换台静默过渡(白噪声/电平
 // 表已按用户要求移除,2026-10-24)。
+#include "theme.h"
 #include "radio_app.h"
+#include "settings.h"
 
 LV_FONT_DECLARE(font_home_cn_16);
 
@@ -27,12 +29,19 @@ LV_FONT_DECLARE(font_home_cn_16);
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+// 输出选择表(与 Tab5 app_radio 同源;中继端点 play_on/cmd)
+const RadioApp::RadioOutput RadioApp::kOutputs[3] = {
+    {"本机",   ""},
+    {"客厅",   "RINCON_804AF273361501400"},
+    {"起居室", "ap464e4403a588"},
+};
+
 static const char* TAG = "radio";
 
-#define C_BG 0x0a1f14
-#define C_FG 0xb7f5c4
-#define C_DIM 0x4f7a5e
-#define C_HINT 0x34573f
+#define C_BG theme::bg()
+#define C_FG theme::fg()
+#define C_DIM theme::dim()
+#define C_HINT theme::hint()
 #define C_AMBER 0xf5a263      // 指针琥珀
 #define C_AMBER_SOFT 0xb98a5e // 主刻度
 #define C_RED 0xf56363
@@ -474,8 +483,10 @@ static void root_draw_cb(lv_event_t* e) {
     draw_rect(layer, &dsc, oc, bx + 12, by + 15, 30, 30, 0x081710, 15);
     draw_rect(layer, &dsc, oc, bx + 63, by + 15, 12, 12, C_AMBER, 6);
     draw_rect(layer, &dsc, oc, bx + 63, by + 34, 12, 12, 0x081710, 6);
-    // 音量条:轨道+填充(宽度∝音量)
-    int vol = Board::GetInstance().GetAudioCodec()->output_volume();
+    // 音量条:轨道+填充(宽度∝音量;外部模式用 ext_vol_ 而非 codec)
+    int vol = (RadioApp::Get().out_sel_ > 0)
+                  ? RadioApp::Get().ext_vol_
+                  : Board::GetInstance().GetAudioCodec()->output_volume();
     if (vol < 0) vol = 0;
     if (vol > 100) vol = 100;
     draw_rect(layer, &dsc, oc, kVolX, VolY(), kVolW, kVolH, C_HINT, 2);
@@ -545,6 +556,131 @@ void RadioApp::ApplyStation(int idx, bool animate) {
     }
 }
 
+// ── 外部输出: LAN 短请求(<10ms,持 LVGL 锁可接受) ──────────────────
+
+// 带超时参数的版本(play_on 需要更长超时)
+bool RadioApp::ExtHttpGetTimeout(const char* path, int timeout_ms) {
+    char url[192];
+    snprintf(url, sizeof(url), "http://192.168.1.200:8769%s", path);
+    esp_http_client_config_t cfg = {};
+    cfg.url = url;
+    cfg.method = HTTP_METHOD_GET;
+    cfg.timeout_ms = timeout_ms;
+    cfg.buffer_size = 512;
+    esp_http_client_handle_t h = esp_http_client_init(&cfg);
+    if (!h) return false;
+    bool ok = false;
+    if (esp_http_client_open(h, 0) == ESP_OK) {
+        esp_http_client_fetch_headers(h);
+        ok = esp_http_client_get_status_code(h) == 200;
+    }
+    esp_http_client_close(h);
+    esp_http_client_cleanup(h);
+    return ok;
+}
+
+bool RadioApp::ExtHttpGet(const char* path) {
+    char url[192];
+    snprintf(url, sizeof(url), "http://192.168.1.200:8769%s", path);
+    esp_http_client_config_t cfg = {};
+    cfg.url = url;
+    cfg.method = HTTP_METHOD_GET;
+    cfg.timeout_ms = 3000;
+    cfg.buffer_size = 512;
+    esp_http_client_handle_t h = esp_http_client_init(&cfg);
+    if (!h) return false;
+    bool ok = false;
+    if (esp_http_client_open(h, 0) == ESP_OK) {
+        esp_http_client_fetch_headers(h);
+        ok = esp_http_client_get_status_code(h) == 200;
+    }
+    esp_http_client_close(h);
+    esp_http_client_cleanup(h);
+    return ok;
+}
+
+void RadioApp::ExtPlay(int station) {
+    if (out_sel_ <= 0 || out_sel_ >= kOutputCount) return;
+    if (station < 0 || station >= kMaxStations) return;
+    // 从完整 URL 提取 key(如 http://…/radio/szjt → "szjt")
+    const char* url = kStations[station].url;
+    const char* key = strrchr(url, '/');
+    if (key == nullptr) return;
+    key++;   // 跳过 '/'
+    char path[96];
+    snprintf(path, sizeof(path), "/radio/%s/play_on?p=%s",
+             key, kOutputs[out_sel_].pid);
+    // 超时 6s:MA 启动播放可能 >3s(play_on 需 MA WS 通信)
+    bool ok = ExtHttpGetTimeout(path, 6000);
+    is_playing_.store(true);   // 无论成败:用户意图在播(失败→OK 重试)
+    if (ok) {
+        ESP_LOGI(TAG, "ext play: %s -> %s",
+                 kStations[station].name, kOutputs[out_sel_].name);
+    } else {
+        ESP_LOGW(TAG, "ext play slow/failed (station=%d out=%d)", station, out_sel_);
+    }
+}
+
+void RadioApp::ExtStop() {
+    is_playing_.store(false);
+    // 不检查 out_sel_(调用方可能已改 out_sel_):直接用旧值
+    // CycleOutput 在改 out_sel_ 前调本函数;其他路径 out_sel_ 未变
+    // 改为接受参数式的做法太侵入,这里改为"如果 out_sel_>0 就发 stop"
+    if (out_sel_ <= 0 || out_sel_ >= kOutputCount) return;
+    char path[96];
+    snprintf(path, sizeof(path), "/radio/cmd?p=%s&c=stop", kOutputs[out_sel_].pid);
+    bool ok = ExtHttpGet(path);
+    ESP_LOGI(TAG, "extStop: %s ok=%d", path, ok);
+}
+
+void RadioApp::ExtSetVolume(int vol) {
+    if (out_sel_ <= 0 || out_sel_ >= kOutputCount) return;
+    char path[96];
+    snprintf(path, sizeof(path), "/radio/cmd?p=%s&c=volume_set&v=%d",
+             kOutputs[out_sel_].pid, vol);
+    bool ok = ExtHttpGet(path);
+    ESP_LOGI(TAG, "ext vol %d -> %s (ok=%d ext=%d out=%d)",
+             vol, kOutputs[out_sel_].name, ok, (int)is_playing_.load(), out_sel_);
+}
+
+void RadioApp::CycleOutput() {
+    // 无条件停旧输出:is_playing_ 标志可能因时序不同步为 false,
+    // 但只要 out_sel_ 指向外部就发 stop(2026-11-01 实锤)
+    ESP_LOGI(TAG, "cycleOutput: ext=%d out=%d",
+             (int)is_playing_.load(), out_sel_);
+    if (out_sel_ > 0) {
+        char path[96];
+        snprintf(path, sizeof(path), "/radio/cmd?p=%s&c=stop",
+                 kOutputs[out_sel_].pid);
+        ExtHttpGet(path);
+        ESP_LOGI(TAG, "cycle: forced stop %s", kOutputs[out_sel_].name);
+    }
+    out_sel_ = (out_sel_ + 1) % kOutputCount;
+    // NVS 持久化
+    {   Settings st("radio", true); st.SetInt("output", out_sel_); }
+    RefreshOutputUi();
+    ESP_LOGI(TAG, "output -> %s", kOutputs[out_sel_].name);
+}
+
+void RadioApp::RefreshOutputUi() {
+    // "正在播放"标签整合输出源:本机=正在播放,外部=正在播放(客厅/起居室)
+    if (st_labels_[1] != nullptr) {
+        if (out_sel_ > 0) {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "正在播放(%s)", kOutputs[out_sel_].name);
+            lv_label_set_text(st_labels_[1], buf);
+        } else {
+            lv_label_set_text(st_labels_[1], "正在播放");
+        }
+    }
+    // 列表行文字
+    if (out_row_label_ != nullptr) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "输出: %s", kOutputs[out_sel_].name);
+        lv_label_set_text(out_row_label_, buf);
+    }
+}
+
 void RadioApp::Create(lv_obj_t* parent) {
     if (root_ != nullptr) return;
     s_ui_oom = false;
@@ -568,7 +704,7 @@ void RadioApp::Create(lv_obj_t* parent) {
     lv_obj_set_style_pad_all(root_, 0, 0);
     lv_obj_set_scrollbar_mode(root_, LV_SCROLLBAR_MODE_OFF);
     lv_obj_clear_flag(root_, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(root_, LV_OBJ_FLAG_HIDDEN);   // 先隐藏,Enter 再显示
+        lv_obj_add_flag(root_, LV_OBJ_FLAG_HIDDEN);   // 先隐藏,Enter 再显示
     lv_obj_add_event_cb(root_, root_draw_cb, LV_EVENT_DRAW_MAIN, nullptr);   // 图标/音量条/分隔线
 
     lv_obj_t* title = mk_label(root_, C_FG);
@@ -676,6 +812,12 @@ void RadioApp::Create(lv_obj_t* parent) {
             lv_label_set_text(lt, "频道列表 · OK 播放 · 长按收起");
             lv_obj_set_pos(lt, 10, 4);
         }
+        // 输出行(首行,列表选中可到 -1;台名从第 1 行起)
+        out_row_label_ = mk_label(list_panel_, C_FG);
+        if (out_row_label_ != nullptr) {
+            lv_label_set_text(out_row_label_, "输出: 本机");
+            lv_obj_set_pos(out_row_label_, 18, kListTop);
+        }
         // 单个多行 label 承载全部台名(行距补齐到 22px,指示条按行定位),
         // 比 14 个行 label 省 ~1.7K;文本只在 Create 设置一次
         const int lh = lv_font_get_line_height(&font_home_cn_16);
@@ -690,7 +832,7 @@ void RadioApp::Create(lv_obj_t* parent) {
             if (off > 0 && list_text[off - 1] == '\n') list_text[off - 1] = '\0';
             lv_label_set_text(rows, list_text);
             lv_obj_set_style_text_line_space(rows, kListRow - lh, 0);
-            lv_obj_set_pos(rows, 16, kListTop);
+            lv_obj_set_pos(rows, 16, kListTop + kListRow);
         }
         list_bar_ = mk_box(list_panel_, 6, kListTop, 4, lh, C_AMBER, 2);
         if (s_ui_oom || rows == nullptr || list_bar_ == nullptr) {
@@ -788,6 +930,7 @@ void RadioApp::CancelStartTimer() {
 }
 
 void RadioApp::StopPlay() {
+    if (is_playing_.exchange(false)) ExtStop();   // 外部: 停投(幂等)
     stop_req_.store(true);   // 任务 ≤1 次读超时内自退
 }
 
@@ -795,9 +938,16 @@ void RadioApp::PlayStation(int idx) {
     // 选台播放:停旧流 + 350ms 防抖后等旧任务退出再启动(见 ScheduleStart)
     sel_ = idx;
     ApplyStation(sel_, false);
-    st_show(st_labels_, 4, &status_label_);
-    StopPlay();
-    ScheduleStart(350);
+    StopPlay();   // 含外部停投(如切换输出后重播)
+    if (out_sel_ > 0) {
+        // 外部模式:投到 Sonos/HomePod(不走本机 PCM 流)
+        ExtPlay(idx);
+        st_show(st_labels_, 1, &status_label_);   // 1="正在播放"   // "正在播放"
+    } else {
+        is_playing_.store(true);
+        st_show(st_labels_, 4, &status_label_);
+        ScheduleStart(350);
+    }
 }
 
 void RadioApp::ChangeStation(int dir) {
@@ -821,17 +971,36 @@ void RadioApp::CloseStationList() {
 }
 
 void RadioApp::MoveListSel(int d) {
-    list_sel_ = (list_sel_ + d + kStationCount) % kStationCount;
+    // -1=输出行,0..13=电台;环绕含输出行
+    int total = kStationCount + 1;   // 含输出行
+    int cur = list_sel_ + 1;          // 偏移到 0..total-1
+    list_sel_ = ((cur + d) % total + total) % total - 1;
     UpdateListHighlight();
 }
 
 void RadioApp::UpdateListHighlight() {
     if (list_bar_ == nullptr) return;
-    lv_obj_set_pos(list_bar_, 6, kListTop + list_sel_ * kListRow);
+    int row = list_sel_ + 1;   // -1 → 0(输出行), 0+ → 1+
+    lv_obj_set_pos(list_bar_, 6, kListTop + row * kListRow);
     lv_obj_scroll_to_view(list_bar_, LV_ANIM_OFF);   // 选中行滚进可见区
 }
 
 void RadioApp::AdjustVolume(int delta) {
+    ESP_LOGI(TAG, "AdjustVolume(%d) ext=%d out=%d",
+             delta, (int)is_playing_.load(), out_sel_);
+    if (out_sel_ > 0) {
+        ext_vol_ += delta;
+        if (ext_vol_ < 0) ext_vol_ = 0;
+        if (ext_vol_ > 100) ext_vol_ = 100;
+        ExtSetVolume(ext_vol_);
+        // 失效音量条区域(与本机分支同一段代码)
+        lv_area_t a;
+        lv_obj_get_coords(root_, &a);
+        a.x1 += kVolX - 2;  a.y1 += VolY() - 2;
+        a.x2 = a.x1 + kVolW + 3;  a.y2 = a.y1 + kVolH + 3;
+        lv_obj_invalidate_area(root_, &a);
+        return;
+    }
     AudioCodec* codec = Board::GetInstance().GetAudioCodec();
     int v = codec->output_volume() + delta;
     if (v < 0) v = 0;
@@ -866,23 +1035,63 @@ void RadioApp::HandleKey(int key) {
                 OpenStationList();
             }
             break;
-        case 2:   // OK:列表开=播放选中并返回播放页;列表关=播放/暂停
+        case 2:   // OK:列表开=播放选中/切输出;列表关=播放/暂停 toggle
             if (list_open_) {
+                if (list_sel_ < 0) {
+                    // ── 输出行: 停一切 → 切输出 → 关列表 → 续播 ──
+                    bool resume = is_playing_.load();
+                    StopPlay();
+                    CancelStartTimer();
+                    if (out_sel_ > 0) {   // 停旧外部
+                        char sp[96];
+                        snprintf(sp, sizeof(sp), "/radio/cmd?p=%s&c=stop",
+                                 kOutputs[out_sel_].pid);
+                        ExtHttpGet(sp);
+                    }
+                    is_playing_.store(false);
+                    CycleOutput();
+                    CloseStationList();
+                    if (resume) {
+                        if (out_sel_ > 0) {
+                            ExtPlay(sel_);
+                            st_show(st_labels_, 1, &status_label_);
+                        } else {
+                            is_playing_.store(true);
+                            st_show(st_labels_, 3, &status_label_);
+                            ScheduleStart(350);
+                        }
+                    }
+                    break;
+                }
                 int pick = list_sel_;
                 CloseStationList();
-                if (pick != sel_ || !TaskRunning()) {
-                    PlayStation(pick);
-                }
+                PlayStation(pick);   // 统一入口(内设 is_playing_)
                 break;
             }
-            if (TaskRunning() && !StopRequested()) {
+            // ── 播放/暂停: is_playing_ 是唯一判据 ──
+            if (is_playing_.load()) {
+                // 暂停: 停一切
                 CancelStartTimer();
                 StopPlay();
+                if (out_sel_ > 0) {
+                    char sp[96];
+                    snprintf(sp, sizeof(sp), "/radio/cmd?p=%s&c=stop",
+                             kOutputs[out_sel_].pid);
+                    ExtHttpGet(sp);
+                }
+                is_playing_.store(false);
                 st_show(st_labels_, 2, &status_label_);
             } else {
-                // 未播放,或正在停止中(换台余波)→ (重新)启动
-                st_show(st_labels_, 3, &status_label_);
-                ScheduleStart(300);
+                // 播放: 在当前输出上启动
+                if (out_sel_ > 0) {
+                    is_playing_.store(true);   // 先置:ExtPlay 可能超时但意图在播
+                    ExtPlay(sel_);
+                    st_show(st_labels_, 1, &status_label_);
+                } else {
+                    is_playing_.store(true);
+                    st_show(st_labels_, 3, &status_label_);
+                    ScheduleStart(300);
+                }
             }
             break;
         default:
@@ -897,6 +1106,10 @@ void RadioApp::Enter() {
     // 收不到一个字节(HTTP_CLIENT "timed out before data was ready")。
     // MQTT/轮询的小请求侥幸能过,流式响应必死。
     esp_wifi_set_ps(WIFI_PS_NONE);
+    // 输出选择恢复(NVS)
+    {   Settings st("radio", false); out_sel_ = st.GetInt("output", 0); }
+    if (out_sel_ < 0 || out_sel_ >= kOutputCount) out_sel_ = 0;
+    RefreshOutputUi();
     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
         if (!active_) {
             lv_obj_clear_flag(root_, LV_OBJ_FLAG_HIDDEN);
@@ -928,6 +1141,14 @@ void RadioApp::Enter() {
 }
 
 void RadioApp::Leave() {
+    // 无条件停外部输出(不依赖 is_playing_)
+    if (out_sel_ > 0) {
+        char path[96];
+        snprintf(path, sizeof(path), "/radio/cmd?p=%s&c=stop",
+                 kOutputs[out_sel_].pid);
+        ExtHttpGet(path);
+    }
+    is_playing_.store(false);
     StopPlay();
     CloseStationList();   // 列表随会话收起(状态标志复位)
     esp_wifi_set_ps(WIFI_PS_MAX_MODEM);   // 恢复省电(见 Enter 注释)

@@ -1,5 +1,6 @@
 // timer_app —— 倒计时器(极简单页版)。见 timer_app.h。
 
+#include "theme.h"
 #include "timer_app.h"
 
 #include "timer_beep.h"
@@ -23,7 +24,7 @@ void TimerApp::Create(lv_obj_t* parent) {
     root_ = lv_obj_create(parent);
     lv_obj_set_size(root_, LV_PCT(100), LV_PCT(100));
     lv_obj_center(root_);
-    lv_obj_set_style_bg_color(root_, lv_color_hex(0x101418), 0);
+    lv_obj_set_style_bg_color(root_, lv_color_hex(theme::bg()), 0);
     lv_obj_set_style_border_width(root_, 0, 0);
     lv_obj_set_style_pad_all(root_, 6, 0);
     lv_obj_set_style_radius(root_, 0, 0);
@@ -90,7 +91,7 @@ void TimerApp::Tick() {
             // tick4亮 5暗 6亮 7暗 8亮 9暗 = 3 次完整闪烁
             bool lit = ((done_ticks_ - 4) % 2) == 0;
             lv_obj_set_style_bg_color(root_,
-                lit ? lv_color_hex(0x3A2E10) : lv_color_hex(0x101418), 0);
+                lit ? lv_color_hex(0x3A2E10) : lv_color_hex(theme::bg()), 0);
         }
         return;
     }
@@ -138,7 +139,7 @@ void TimerApp::HandleKey(int key) {
         case St::DONE:
             if (key == 2) {
                 st_ = St::SEL;
-                if (root_ != nullptr) lv_obj_set_style_bg_color(root_, lv_color_hex(0x101418), 0);
+                if (root_ != nullptr) lv_obj_set_style_bg_color(root_, lv_color_hex(theme::bg()), 0);
                 Render();
             }
             return;
@@ -153,7 +154,7 @@ void TimerApp::Render() {
     lv_label_set_text_fmt(big_label_, "%02d:%02d", show / 60, show % 60);
     lv_obj_set_style_text_color(big_label_,
         st_ == St::DONE ? lv_color_hex(0xFFC24B)
-        : st_ == St::PAUSED ? lv_color_hex(0xE8E3D3)
+        : st_ == St::PAUSED ? lv_color_hex(theme::fg())
         : lv_color_hex(0x9FE870), 0);
 
     // 网格高亮(仅待机可选)
@@ -193,7 +194,7 @@ void TimerApp::Enter() {
         if (timer_ != nullptr) lv_timer_resume(timer_);
         st_ = St::SEL;
         done_ticks_ = 0;
-        lv_obj_set_style_bg_color(root_, lv_color_hex(0x101418), 0);
+        lv_obj_set_style_bg_color(root_, lv_color_hex(theme::bg()), 0);
         Render();
         lvgl_port_unlock();
     }

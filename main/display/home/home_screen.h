@@ -31,6 +31,9 @@
 // hermes 主服务 /system/status(OrangePi APP;与 Mac Übersicht widget 同源)
 #define HOME_OPI_BASE_URL "http://192.168.1.200:8766"
 
+// hermes 主服务 /api/health(健康 APP;iPhone 快捷指令推送,Tab5 同源)
+#define HOME_HEALTH_BASE_URL "http://192.168.1.200:8766"
+
 #include <string>
 
 #include "lvgl.h"
@@ -61,6 +64,7 @@ public:
     bool HandleLauncherKey(int key);
     void SwitchApp(int idx);   // 切换 APP(销毁上一个)
     bool ExitCurrentApp();     // 退出即销毁当前 APP(释放常驻内存),无 APP 则 false
+    void RebuildTheme();       // 主题切换后重建主页(删 root 重新 Create)
     void LauncherHighlight();
     int launcher_selected() const { return launcher_sel_; }
 

@@ -24,6 +24,7 @@
 #include "mail_status.h"
 #include "news_service.h"
 #include "opi_service.h"
+#include "health_service.h"
 #include "weather_service.h"
 
 static const char* TAG = "poller";
@@ -40,13 +41,15 @@ static int s_mail_interval = 2;
 static std::string s_news_url;
 static int s_news_interval = 30;
 static std::string s_opi_url;   // OrangePi 状态:无周期,仅 APP 打开/OK 的 force 拉取
+static std::string s_health_url;   // 健康:同 force 模式(iPhone 推送,数据低频)
 
 void PollerConfig(const std::string& weather_url, int weather_min,
                   const char* glm_key, int glm_min,
                   const std::string& agenda_url, int agenda_min,
                   const std::string& mail_url, int mail_min,
                   const std::string& news_url, int news_min,
-                  const std::string& opi_url) {
+                  const std::string& opi_url,
+                  const std::string& health_url) {
     s_weather_url = weather_url;
     s_weather_interval = weather_min;
     s_glm_key = glm_key;
@@ -58,6 +61,7 @@ void PollerConfig(const std::string& weather_url, int weather_min,
     s_news_url = news_url;
     s_news_interval = news_min;
     s_opi_url = opi_url;
+    s_health_url = health_url;
 }
 
 Poller& Poller::Get() {
@@ -254,6 +258,11 @@ void Poller::Loop() {
             Beat();
             OpiService::Get().Poll();
         }
+        // 健康:同 force 模式(iPhone 快捷指令推送,数据分钟级低频)
+        if (HealthService::Get().ConsumeForce()) {
+            Beat();
+            HealthService::Get().Poll();
+        }
         first_round = false;
         last_weather = last_weather;  // no-op,保持变量活跃
 
@@ -266,6 +275,7 @@ void Poller::Loop() {
             if (MailStatus::Get().ForcePending()) break;   // 邮件手动刷新快速响应
             if (NewsService::Get().ForcePending()) break;  // 新闻手动刷新快速响应
             if (OpiService::Get().ForcePending()) break;   // OrangePi 手动刷新快速响应
+            if (HealthService::Get().ForcePending()) break;   // 健康手动刷新快速响应
             Beat();   // 空闲等待也算存活,否则 5 分钟间隔会被看门狗误判
             vTaskDelay(pdMS_TO_TICKS(500));
         }
@@ -283,6 +293,7 @@ void Poller::Start() {
     MailStatus::Get().Start(s_mail_url, s_mail_interval);
     NewsService::Get().Start(s_news_url, s_news_interval);
     OpiService::Get().Start(s_opi_url);
+    HealthService::Get().Start(s_health_url);
     running_.store(true);
     // 5KB 栈:实测峰值 2.8KB(全数据源局域网纯 HTTP,cJSON 解析),
     // 栈小一号也更容易在内存碎片化后重建(见下方失败重启)。

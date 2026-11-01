@@ -1,6 +1,7 @@
 // mail_app —— 未读邮件查看器实现。
 // 数据来自 MailStatus(hermes /mail/status)。
 
+#include "theme.h"
 #include "mail_app.h"
 
 #include <cstdio>
@@ -21,7 +22,7 @@ void MailApp::Create(lv_obj_t* parent) {
 
     root_ = lv_obj_create(parent);
     lv_obj_set_size(root_, LV_HOR_RES, LV_VER_RES);
-    lv_obj_set_style_bg_color(root_, lv_color_hex(0x101418), 0);
+    lv_obj_set_style_bg_color(root_, lv_color_hex(theme::bg()), 0);
     lv_obj_set_style_border_width(root_, 0, 0);
     lv_obj_set_style_pad_all(root_, 8, 0);
     lv_obj_set_style_radius(root_, 0, 0);
@@ -47,7 +48,7 @@ void MailApp::Create(lv_obj_t* parent) {
     // 主题(白色,最多两行,超出裁剪不显示)
     subject_label_ = lv_label_create(root_);
     lv_obj_set_style_text_font(subject_label_, &font_home_cn_16, 0);
-    lv_obj_set_style_text_color(subject_label_, lv_color_hex(0xE8E3D3), 0);
+    lv_obj_set_style_text_color(subject_label_, lv_color_hex(theme::fg()), 0);
     lv_obj_set_width(subject_label_, LV_HOR_RES - 16);
     lv_obj_set_height(subject_label_, 38);   // 两行(行高 ~19)
     lv_label_set_long_mode(subject_label_, LV_LABEL_LONG_WRAP);

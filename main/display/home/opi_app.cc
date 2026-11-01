@@ -2,6 +2,7 @@
 // 数据来自 OpiService(hermes /system/status,与 Mac 桌面 widget 同源)。
 // UI 严格复刻 news_app(已验证可显示):头部标签 + 单个多行正文标签。
 
+#include "theme.h"
 #include "opi_app.h"
 
 #include <cstdio>
@@ -19,7 +20,7 @@ OpiApp& OpiApp::Get() {
     return inst;
 }
 
-static const uint32_t C_TEXT = 0xE8E3D3, C_DIM = 0x6B7683, C_SEC = 0x2A333D;
+static const uint32_t C_TEXT = theme::fg(), C_DIM = theme::dim(), C_SEC = 0x2A333D;
 static const uint32_t C_GREEN = 0x34D399, C_AMBER = 0xFBBF24, C_RED = 0xEF4444;
 
 static uint32_t tier_color(float pct, float danger, float warn) {
@@ -60,7 +61,7 @@ void OpiApp::Create(lv_obj_t* parent) {
 
     root_ = lv_obj_create(parent);
     lv_obj_set_size(root_, LV_HOR_RES, LV_VER_RES);
-    lv_obj_set_style_bg_color(root_, lv_color_hex(0x101418), 0);
+    lv_obj_set_style_bg_color(root_, lv_color_hex(theme::bg()), 0);
     lv_obj_set_style_border_width(root_, 0, 0);
     lv_obj_set_style_pad_all(root_, 8, 0);
     lv_obj_set_style_radius(root_, 0, 0);

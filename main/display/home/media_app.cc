@@ -1,4 +1,5 @@
 // media_app.cc —— 播放文件夹选择屏(音乐播放器 Sonos/HomePod + 收音机)。
+#include "theme.h"
 #include "media_app.h"
 
 LV_FONT_DECLARE(font_home_cn_16);
@@ -10,9 +11,9 @@ LV_FONT_DECLARE(font_material_symbols_30_4);   // 行图标用 30px(固件已链
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
 
-#define C_BG 0x0a1f14
-#define C_FG 0xb7f5c4
-#define C_DIM 0x4f7a5e
+#define C_BG theme::bg()
+#define C_FG theme::fg()
+#define C_DIM theme::dim()
 
 static const char* TAG = "media";
 

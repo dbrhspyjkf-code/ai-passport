@@ -25,7 +25,7 @@ public:
 private:
     ToolsApp() = default;
 
-    static const int kToolCount = 2;   // 新闻 / OrangePi
+    static const int kToolCount = 3;   // 新闻 / OrangePi / 健康
     bool active_ = false;
     int sel_ = 0;
     lv_obj_t* root_ = nullptr;

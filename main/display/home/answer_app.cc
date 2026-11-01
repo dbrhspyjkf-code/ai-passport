@@ -1,4 +1,5 @@
 // answer_app.cc —— 答案之书实现。
+#include "theme.h"
 #include "answer_app.h"
 
 #include <cstdio>
@@ -12,10 +13,10 @@
 static const char* TAG = "answer";
 
 // 夜空风配色(M5-DIAL 同款基调)
-#define C_NIGHT_BG 0x222130     // 深蓝紫底
+#define C_NIGHT_BG theme::bg()     // 深蓝紫底
 #define C_STAR 0x46527e         // 星点
 #define C_TITLE 0x8ae0f7        // 标题青
-#define C_TEXT 0x9fa3c8         // 提示文字
+#define C_TEXT theme::fg()         // 提示文字
 #define C_ANSWER 0x8b87f0       // 翻页中答案(暗)
 #define C_REVEAL 0x8ae0f7       // 定格答案(亮青)
 

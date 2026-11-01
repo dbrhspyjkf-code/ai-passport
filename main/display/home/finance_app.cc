@@ -1,5 +1,6 @@
 // finance_app.cc —— 金融 APP 实现。
 // 后台 task 顺序拉取三个端点(每 tab 一次 HTTP),完成后 UI 持锁重建列表。
+#include "theme.h"
 #include "finance_app.h"
 
 #include <cstdio>
@@ -20,10 +21,10 @@
 static const char* TAG = "finance";
 
 // 配色与主页一致
-#define C_BG 0x0a1f14
-#define C_FG 0xb7f5c4
-#define C_DIM 0x4f7a5e
-#define C_HINT 0x34573f
+#define C_BG theme::bg()
+#define C_FG theme::fg()
+#define C_DIM theme::dim()
+#define C_HINT theme::hint()
 #define C_UP 0xe5493f     // 涨-红
 #define C_DOWN 0x2fa653   // 跌-绿
 

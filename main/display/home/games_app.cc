@@ -1,4 +1,5 @@
 // games_app.cc —— 娱乐文件夹选择屏实现(方块/Flappy/答案之书)。
+#include "theme.h"
 #include "games_app.h"
 
 LV_FONT_DECLARE(font_home_cn_16);
@@ -10,10 +11,10 @@ LV_FONT_DECLARE(font_home_cn_16);
 
 #include "esp_lvgl_port.h"
 
-#define C_BG 0x0a1f14
-#define C_FG 0xb7f5c4
-#define C_DIM 0x4f7a5e
-#define C_HINT 0x34573f
+#define C_BG theme::bg()
+#define C_FG theme::fg()
+#define C_DIM theme::dim()
+#define C_HINT theme::hint()
 
 GamesApp& GamesApp::Get() {
     static GamesApp instance;
