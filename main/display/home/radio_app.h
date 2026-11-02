@@ -6,6 +6,8 @@
 // 输出选择(2026-11-01,参考 Tab5 收音机): 本机喇叭 / 客厅 Sonos /
 // 起居室 HomePod。外部输出走中继 /radio/<key>/play_on + /cmd 端点,
 // 本机不播音(NVS 持久化,电台列表首行切换)。
+// 动态电台表(2026-11-02,同 Tab5): 进 app 拉 /radio/stations,增删台
+// 只改中继一处;内置表离线兜底。
 // 交互:短按上/下=音量,长按上/下=频道列表(列表内短按上下选择,OK 播放
 // 并返回;列表首行=输出切换),OK=播放/暂停,长按 OK=退出。
 
@@ -13,6 +15,11 @@
 #include <atomic>
 
 #include "lvgl.h"
+
+// 动态电台表上限(类外: radio_app.cc 的文件级静态数组要用)。
+// 22=内置 19 台+中继余量;label 池超 14 个的部分创建失败只降级不阻止进 app。
+inline constexpr int kRadioMaxStations = 22;
+inline constexpr int kRadioBuiltInStations = 19;   // 内置兜底数(与 relay 同步)
 
 class RadioApp {
 public:
@@ -49,7 +56,9 @@ public:
 private:
     RadioApp() = default;
 
-    static const int kMaxStations = 14;
+    // 动态表上限(见类外 kRadioMaxStations 注释)
+    static const int kMaxStations = kRadioMaxStations;
+    static const int kBuiltInStations = kRadioBuiltInStations;
     static const int kBandLow = 880;
     static const int kBandHigh = 1080;
     static const int kTrackLeft = 20;
@@ -81,7 +90,12 @@ private:
     lv_obj_t* glow_ = nullptr;
     lv_obj_t* list_panel_ = nullptr;
     lv_obj_t* list_bar_ = nullptr;
+    lv_obj_t* list_rows_ = nullptr;         // 列表多行台名 label(表更新刷新)
     lv_obj_t* out_row_label_ = nullptr;     // 列表首行"输出: XXX"
+
+    // ── 动态电台表(2026-11-02): 中继 /radio/stations, 内置兜底 ──
+    void FetchStations();                   // Enter 时后台拉(一次性任务)
+    void RefreshStationTexts();             // 表换入后刷新 label/列表文本
     bool list_open_ = false;
     int list_sel_ = 0;                       // -1=输出行,0+=电台
     lv_timer_t* start_timer_ = nullptr;

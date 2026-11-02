@@ -13,6 +13,7 @@ LV_FONT_DECLARE(font_home_cn_16);
 #include "display.h"
 #include "audio_codec.h"
 #include "poller.h"
+#include "cJSON.h"
 
 #include <cstdio>
 #include <cstring>
@@ -46,30 +47,38 @@ static const char* TAG = "radio";
 #define C_AMBER_SOFT 0xb98a5e // 主刻度
 #define C_RED 0xf56363
 
-// 电台表:URL 指向转码中继;freq=真实 FM 频率(0.1MHz 单位,0=网络台
-// 按列表位置均布)。频率用各地真实频点,网络台读数不编造。
-struct RadioStation {
-    const char* name;
-    const char* url;
+// ── 动态电台表(2026-11-02,同 Tab5): 中继 /radio/stations 下发为准,
+// 增删台只改 relay 一处。固定结构数组(BSS ~800B)+计数;写入只发生在
+// LVGL 锁内(FetchStations 任务),所有读者都在 LVGL 线程 → 无需额外锁。
+// 内置 19 台作离线兜底(与 relay STATIONS 同步维护)。
+struct StationDyn {
+    char name[28];
+    char key[12];
     int freq;   // 0.1MHz;0=无 FM 频点(网络台)
 };
-static const RadioStation kStations[] = {
-    {"深圳交通广播", "http://192.168.1.200:8769/radio/szjt", 1062},
-    {"深圳新闻广播", "http://192.168.1.200:8769/radio/szxw", 898},
-    {"深圳飞扬971", "http://192.168.1.200:8769/radio/szfy", 971},
-    {"深圳生活广播", "http://192.168.1.200:8769/radio/szsh", 942},
-    {"央广中国之声", "http://192.168.1.200:8769/radio/zgzs", 0},
-    {"央广经济之声", "http://192.168.1.200:8769/radio/jjzs", 0},
-    {"广东音乐之声", "http://192.168.1.200:8769/radio/gdyy", 993},
-    {"羊城交通广播", "http://192.168.1.200:8769/radio/gdyz", 1052},
-    {"广东新闻FM91.4", "http://192.168.1.200:8769/radio/gdxw", 914},
-    {"珠江经济FM97.4", "http://192.168.1.200:8769/radio/zjjs", 974},
-    {"BBC World Service", "http://192.168.1.200:8769/radio/bbcws", 0},
-    {"NPR News", "http://192.168.1.200:8769/radio/npr", 0},
-    {"KEXP 独立音乐", "http://192.168.1.200:8769/radio/kexp", 0},
-    {"Radio Paradise", "http://192.168.1.200:8769/radio/rp", 0},
+static StationDyn s_st[kRadioMaxStations] = {
+    {"深圳交通广播",    "szjt",  1062},
+    {"深圳新闻广播",    "szxw",  898},
+    {"深圳飞扬971",     "szfy",  971},
+    {"深圳生活广播",    "szsh",  942},
+    {"央广中国之声",    "zgzs",  0},
+    {"央广经济之声",    "jjzs",  0},
+    {"广东音乐之声",    "gdyy",  993},
+    {"羊城交通广播",    "gdyz",  1052},
+    {"广东新闻FM91.4",  "gdxw",  914},
+    {"珠江经济FM97.4",  "zjjs",  974},
+    {"BBC World Service", "bbcws", 0},
+    {"NPR News",        "npr",   0},
+    {"CNN 新闻",        "cnn",   0},
+    {"CNN 国际台",      "cnni",  0},
+    {"MSNBC 新闻",      "msnbc", 0},
+    {"WNYC 纽约公共",   "wnyc",  0},
+    {"WBEZ 芝加哥公共", "wbez",  0},
+    {"KEXP 独立音乐",   "kexp",  0},
+    {"Radio Paradise",  "rp",    0},
 };
-static const int kStationCount = sizeof(kStations) / sizeof(kStations[0]);
+static int s_st_n = kRadioBuiltInStations;
+static const char* kRelayBase = "http://192.168.1.200:8769";
 
 RadioApp& RadioApp::Get() {
     static RadioApp instance;
@@ -510,10 +519,11 @@ int RadioApp::NeedleX(int freq_tenths) const {
 }
 
 int RadioApp::FreqOf(int idx) const {
-    if (kStations[idx].freq != 0) return kStations[idx].freq;
+    if (idx < 0 || idx >= s_st_n) return kBandLow;
+    if (s_st[idx].freq != 0) return s_st[idx].freq;
     // 网络台:按列表位置均布(两端内缩,防指针贴边)
     int span = kBandHigh - kBandLow;
-    return kBandLow + span / 8 + (long)idx * span * 3 / 4 / (kStationCount - 1);
+    return kBandLow + span / 8 + (long)idx * span * 3 / 4 / (s_st_n - 1);
 }
 
 // 状态切换(显隐,零字形渲染):0待机 1播放 2暂停 3连接 4调谐 5失败
@@ -526,9 +536,9 @@ static void st_show(lv_obj_t** labels, int idx, lv_obj_t** cur) {
 }
 
 void RadioApp::ApplyStation(int idx, bool animate) {
-    if (root_ == nullptr || idx < 0 || idx >= kStationCount) return;
+    if (root_ == nullptr || idx < 0 || idx >= s_st_n) return;
     // 台名(含频点):预创建 label 显隐切换(零字形渲染)
-    for (int i = 0; i < kStationCount; i++) {
+    for (int i = 0; i < s_st_n; i++) {
         if (name_labels_[i] != nullptr) {
             (i == idx) ? lv_obj_clear_flag(name_labels_[i], LV_OBJ_FLAG_HIDDEN)
                        : lv_obj_add_flag(name_labels_[i], LV_OBJ_FLAG_HIDDEN);
@@ -601,21 +611,16 @@ bool RadioApp::ExtHttpGet(const char* path) {
 
 void RadioApp::ExtPlay(int station) {
     if (out_sel_ <= 0 || out_sel_ >= kOutputCount) return;
-    if (station < 0 || station >= kMaxStations) return;
-    // 从完整 URL 提取 key(如 http://…/radio/szjt → "szjt")
-    const char* url = kStations[station].url;
-    const char* key = strrchr(url, '/');
-    if (key == nullptr) return;
-    key++;   // 跳过 '/'
+    if (station < 0 || station >= s_st_n) return;
     char path[96];
     snprintf(path, sizeof(path), "/radio/%s/play_on?p=%s",
-             key, kOutputs[out_sel_].pid);
+             s_st[station].key, kOutputs[out_sel_].pid);
     // 超时 6s:MA 启动播放可能 >3s(play_on 需 MA WS 通信)
     bool ok = ExtHttpGetTimeout(path, 6000);
     is_playing_.store(true);   // 无论成败:用户意图在播(失败→OK 重试)
     if (ok) {
         ESP_LOGI(TAG, "ext play: %s -> %s",
-                 kStations[station].name, kOutputs[out_sel_].name);
+                 s_st[station].name, kOutputs[out_sel_].name);
     } else {
         ESP_LOGW(TAG, "ext play slow/failed (station=%d out=%d)", station, out_sel_);
     }
@@ -712,24 +717,27 @@ void RadioApp::Create(lv_obj_t* parent) {
     lv_label_set_text(title, "收音机");
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, kTitleY);
 
-    // 预创建全部动态文字(台名×8/频率×8/状态×6):运行期只切换
+    // 预创建全部动态文字(台名/状态):运行期只切换
     // 显隐,零字形渲染——改文本触发 flash XIP 字形渲染,与音频+
     // 网络 DMA 缓存争抢曾致 taskLVGL 卡死 WDT(2026-10-24 实锤)。
-    // 频率读数用 cn 字体:pixel 字体只有 0-9/: 装不下 ".MHz";
-    // 网络台无 FM 频点,读数不编造。频道号 "n / 8" 已放弃(多 8 个对象
-    // 曾把碎片化的堆压爆→panic)。
     // 每台一个 label:"频点 · 台名"(网络台"网络 · 台名")。曾拆名称/频率
     // 两行×N 台,14 台时 28 个 label 把播放期堆压到 2.5K(largest 576B)
     // → WDT,合并后对齐内存预算。
-    for (int i = 0; i < kStationCount; i++) {
+    // 动态表(2026-11-02): 前 14 台 label 失败仍 fail(原预算基线);
+    // 超出部分(内置 19/中继可到 22)失败只 break 降级——台名不显示
+    // 但选台/播放照常,不值得为它挡住整个 app。
+    for (int i = 0; i < s_st_n && i < kMaxStations; i++) {
         name_labels_[i] = mk_label(root_, C_FG);
-        if (name_labels_[i] == nullptr) break;
-        if (kStations[i].freq != 0) {
+        if (name_labels_[i] == nullptr) {
+            if (i < kBuiltInStations) s_ui_oom = true;   // 基线内失败=真 OOM
+            break;
+        }
+        if (s_st[i].freq != 0) {
             lv_label_set_text_fmt(name_labels_[i], "%d.%d · %s",
-                                  kStations[i].freq / 10, kStations[i].freq % 10,
-                                  kStations[i].name);
+                                  s_st[i].freq / 10, s_st[i].freq % 10,
+                                  s_st[i].name);
         } else {
-            lv_label_set_text_fmt(name_labels_[i], "网络 · %s", kStations[i].name);
+            lv_label_set_text_fmt(name_labels_[i], "网络 · %s", s_st[i].name);
         }
         lv_obj_align(name_labels_[i], LV_ALIGN_TOP_MID, 0, kNameY);
         lv_obj_add_flag(name_labels_[i], LV_OBJ_FLAG_HIDDEN);
@@ -819,20 +827,21 @@ void RadioApp::Create(lv_obj_t* parent) {
             lv_obj_set_pos(out_row_label_, 18, kListTop);
         }
         // 单个多行 label 承载全部台名(行距补齐到 22px,指示条按行定位),
-        // 比 14 个行 label 省 ~1.7K;文本只在 Create 设置一次
+        // 比 14 个行 label 省 ~1.7K;文本只在 Create/表更新时设置
         const int lh = lv_font_get_line_height(&font_home_cn_16);
         lv_obj_t* rows = mk_label(list_panel_, C_FG);
         if (rows != nullptr) {
             static char list_text[kMaxStations * 32 + 64];
             int off = 0;
-            for (int i = 0; i < kStationCount; i++) {
+            for (int i = 0; i < s_st_n && i < kMaxStations; i++) {
                 off += snprintf(list_text + off, sizeof(list_text) - off,
-                                "%d %s\n", i + 1, kStations[i].name);
+                                "%d %s\n", i + 1, s_st[i].name);
             }
             if (off > 0 && list_text[off - 1] == '\n') list_text[off - 1] = '\0';
             lv_label_set_text(rows, list_text);
             lv_obj_set_style_text_line_space(rows, kListRow - lh, 0);
             lv_obj_set_pos(rows, 16, kListTop + kListRow);
+            list_rows_ = rows;   // 表更新时刷新文本
         }
         list_bar_ = mk_box(list_panel_, 6, kListTop, 4, lh, C_AMBER, 2);
         if (s_ui_oom || rows == nullptr || list_bar_ == nullptr) {
@@ -872,7 +881,7 @@ void RadioApp::OnStreamState(int state) {
 void RadioApp::StartPlay() {
     if (!active_) return;   // 用户已退出:绝不启动幽灵播放
     if (TaskRunning()) return;
-    if (sel_ < 0 || sel_ >= kStationCount) return;
+    if (sel_ < 0 || sel_ >= s_st_n) return;
     // 早上验证过的极简配置:字形缓存清 + poller 停。不碰 cork/
     // 不做预检重启(下午的连锁崩溃均来自这些"优化")。
     Board::GetInstance().GetDisplay()->ReleaseCachesForMemory();
@@ -881,8 +890,7 @@ void RadioApp::StartPlay() {
     stop_req_.store(false);
     RadioSession* s = new RadioSession();
     s->app = this;
-    strncpy(s->url, kStations[sel_].url, sizeof(s->url) - 1);
-    s->url[sizeof(s->url) - 1] = 0;
+    snprintf(s->url, sizeof(s->url), "%s/radio/%s", kRelayBase, s_st[sel_].key);
     // 栈 6144→3072:HTTPS 轮询把堆打碎后 largest 常年 ~5K,6K 连续块
     // 开机十几秒后就再也拿不到(→"player task create failed"→换台即
     // "连接失败")。纯 HTTP 无 TLS;实测含流播放的高水位峰值 ~1.4KB
@@ -951,7 +959,111 @@ void RadioApp::PlayStation(int idx) {
 }
 
 void RadioApp::ChangeStation(int dir) {
-    PlayStation((sel_ + dir + kStationCount) % kStationCount);
+    if (s_st_n <= 0) return;
+    PlayStation((sel_ + dir + s_st_n) % s_st_n);
+}
+
+// ── 动态电台表(2026-11-02,同 Tab5): 中继 /radio/stations,内置兜底 ──
+void RadioApp::RefreshStationTexts() {
+    // LVGL 线程内调用: 表换入后刷新台名 label 与列表多行文本。
+    // set_text 有字形渲染成本(一次性瞬态,换表才发生;与播放期持续
+    // 改文本的 WDT 前科不同性质)。
+    if (root_ == nullptr) return;
+    for (int i = 0; i < s_st_n && i < kMaxStations; i++) {
+        if (name_labels_[i] == nullptr) continue;
+        if (s_st[i].freq != 0) {
+            lv_label_set_text_fmt(name_labels_[i], "%d.%d · %s",
+                                  s_st[i].freq / 10, s_st[i].freq % 10,
+                                  s_st[i].name);
+        } else {
+            lv_label_set_text_fmt(name_labels_[i], "网络 · %s", s_st[i].name);
+        }
+        lv_obj_add_flag(name_labels_[i], LV_OBJ_FLAG_HIDDEN);
+    }
+    for (int i = s_st_n; i < kMaxStations; i++) {   // 表变短:多余的不显示
+        if (name_labels_[i] != nullptr)
+            lv_obj_add_flag(name_labels_[i], LV_OBJ_FLAG_HIDDEN);
+    }
+    if (list_rows_ != nullptr) {
+        static char list_text[kMaxStations * 32 + 64];
+        int off = 0;
+        for (int i = 0; i < s_st_n && i < kMaxStations; i++) {
+            off += snprintf(list_text + off, sizeof(list_text) - off,
+                            "%d %s\n", i + 1, s_st[i].name);
+        }
+        if (off > 0 && list_text[off - 1] == '\n') list_text[off - 1] = '\0';
+        lv_label_set_text(list_rows_, list_text);
+    }
+    ApplyStation(sel_, false);
+}
+
+void RadioApp::FetchStations() {
+    // 一次性后台任务: GET /radio/stations → cJSON 解析 → LVGL 锁内换入
+    // (所有读者在 LVGL 线程)。失败静默(内置表兜底)。
+    static bool s_fetching = false;
+    if (s_fetching) return;
+    s_fetching = true;
+    xTaskCreate([](void* p) {
+        RadioApp* self = static_cast<RadioApp*>(p);
+        static char body[2048];   // 21 台 JSON ≈1.3KB
+        int len = 0;
+        esp_http_client_config_t cfg = {};
+        cfg.url = "http://192.168.1.200:8769/radio/stations";
+        cfg.timeout_ms = 6000;
+        cfg.buffer_size = 1024;
+        esp_http_client_handle_t h = esp_http_client_init(&cfg);
+        if (h) {
+            if (esp_http_client_open(h, 0) == ESP_OK) {
+                esp_http_client_fetch_headers(h);
+                if (esp_http_client_get_status_code(h) == 200) {
+                    len = esp_http_client_read(h, body, sizeof(body) - 1);
+                    if (len < 0) len = 0;
+                }
+            }
+            esp_http_client_close(h);
+            esp_http_client_cleanup(h);
+        }
+        StationDyn tmp[kMaxStations];
+        int n = 0;
+        cJSON* root = (len > 0) ? cJSON_Parse(body) : nullptr;
+        if (root) {
+            cJSON* arr = cJSON_GetObjectItem(root, "stations");
+            cJSON* e = nullptr;
+            cJSON_ArrayForEach(e, arr) {
+                if (n >= kMaxStations) break;
+                cJSON* k = cJSON_GetObjectItem(e, "key");
+                cJSON* nm = cJSON_GetObjectItem(e, "name");
+                cJSON* fq = cJSON_GetObjectItem(e, "freq");
+                if (!cJSON_IsString(k) || !cJSON_IsString(nm)) continue;
+                snprintf(tmp[n].key, sizeof(tmp[n].key), "%s", k->valuestring);
+                snprintf(tmp[n].name, sizeof(tmp[n].name), "%s", nm->valuestring);
+                tmp[n].freq = cJSON_IsNumber(fq) ? fq->valueint : 0;
+                n++;
+            }
+            cJSON_Delete(root);
+        }
+        bool same = (n > 0 && n == s_st_n);
+        for (int i = 0; same && i < n; i++)
+            if (strcmp(tmp[i].key, s_st[i].key) != 0) same = false;
+        if (!same && n > 0 && self->root_ != nullptr &&
+            lvgl_port_lock(pdMS_TO_TICKS(1000))) {
+            // 播放索引按 key 重映射(sel_ 是 LVGL 侧成员,锁内改安全)
+            char cur_key[12] = {0};
+            if (self->sel_ >= 0 && self->sel_ < s_st_n)
+                snprintf(cur_key, sizeof(cur_key), "%s", s_st[self->sel_].key);
+            int ns = 0;
+            for (int i = 0; i < n; i++)
+                if (strcmp(tmp[i].key, cur_key) == 0) { ns = i; break; }
+            memcpy(s_st, tmp, sizeof(StationDyn) * n);
+            s_st_n = n;
+            self->sel_ = ns;
+            self->RefreshStationTexts();
+            lvgl_port_unlock();
+            ESP_LOGI(TAG, "stations updated: %d", n);
+        }
+        s_fetching = false;
+        vTaskDelete(nullptr);
+    }, "radio_st", 4096, this, 1, nullptr);
 }
 
 void RadioApp::OpenStationList() {
@@ -971,8 +1083,8 @@ void RadioApp::CloseStationList() {
 }
 
 void RadioApp::MoveListSel(int d) {
-    // -1=输出行,0..13=电台;环绕含输出行
-    int total = kStationCount + 1;   // 含输出行
+    // -1=输出行,0+=电台;环绕含输出行
+    int total = s_st_n + 1;   // 含输出行
     int cur = list_sel_ + 1;          // 偏移到 0..total-1
     list_sel_ = ((cur + d) % total + total) % total - 1;
     UpdateListHighlight();
@@ -1138,6 +1250,8 @@ void RadioApp::Enter() {
     // DeepSeek TLS 握手 2×4.7K)把堆撕到 largest 1.5K,HTTP
     // 客户端 2.5K 装不下→init NULL 瞬间失败(2026-10-24 实锤)
     Poller::Get().Stop();
+    // 动态电台表: 后台拉一次(中继增删台对本机零改动;失败走内置兜底)
+    FetchStations();
 }
 
 void RadioApp::Leave() {
@@ -1174,6 +1288,7 @@ void RadioApp::ResetUiRefs() {
     for (int i = 0; i < 6; i++) st_labels_[i] = nullptr;
     list_panel_ = nullptr;
     list_bar_ = nullptr;
+    list_rows_ = nullptr;
     list_open_ = false;
     status_label_ = nullptr;
     needle_ = glow_ = nullptr;
