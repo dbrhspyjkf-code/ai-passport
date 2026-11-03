@@ -193,17 +193,16 @@ NetworkResult<> Ota::CheckVersion() {
     if (cJSON_IsObject(server_time)) {
         cJSON *timestamp = cJSON_GetObjectItem(server_time, "timestamp");
         cJSON *timezone_offset = cJSON_GetObjectItem(server_time, "timezone_offset");
-        
+
         if (cJSON_IsNumber(timestamp)) {
             // 设置系统时间
             struct timeval tv;
             double ts = timestamp->valuedouble;
-            
-            // 如果有时区偏移，计算本地时间
-            if (cJSON_IsNumber(timezone_offset)) {
-                ts += (timezone_offset->valueint * 60 * 1000); // 转换分钟为毫秒
-            }
-            
+
+            // epoch 必须是 UTC,不加 timezone_offset(2026-11-03 实锤:
+            // 加了 +480min 导致系统钟永久快 8h,GLM RT 等 epoch 计算全错;
+            // 显示需要本地时间时用 localtime + TZ 转换,不动 settimeofday)
+
             tv.tv_sec = (time_t)(ts / 1000);  // 转换毫秒为秒
             tv.tv_usec = (suseconds_t)((long long)ts % 1000) * 1000;  // 剩余的毫秒转换为微秒
             settimeofday(&tv, NULL);

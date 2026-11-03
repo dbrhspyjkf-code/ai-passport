@@ -15,11 +15,12 @@
 
 #include "display.h"
 #include "lvgl.h"
+#include "esp_log.h"
 #include "esp_lvgl_port.h"
 #include "agenda_service.h"
 #include "glm_service.h"
 #include "deepseek_service.h"
-#include "opi_service.h"
+#include "ipo_service.h"
 #include "lunar_calendar.h"
 #include "weather_service.h"
 #include "mail_app.h"
@@ -27,6 +28,7 @@
 #include "tools_app.h"
 #include "opi_app.h"
 #include "health_app.h"
+#include "lottery_app.h"
 #include "finance_app.h"
 #include "tetris_app.h"
 #include "flappy_app.h"
@@ -188,20 +190,20 @@ void HomeScreen::Create(lv_obj_t* parent, const lv_font_t* font) {
     lv_label_set_text(glm_label_, "智谱 GLM …");
     lv_obj_align(glm_label_, LV_ALIGN_TOP_LEFT, 8, 146);
 
-    // ---- GLM 右侧:DeepSeek 余额(与右栏日期/天气同轴;y 同 GLM 文本行) ----
-    // 动态文本:用全量中文字体(font_home_small_16 子集无 D/S/元 字形)
+    // DS 标签保留对象但隐藏(格式改为 GLM 5H/7D/RT,不再显示 DS)
     ds_label_ = lv_label_create(root_);
     lv_obj_set_style_text_font(ds_label_, &font_home_cn_16, 0);
     lv_obj_set_style_text_color(ds_label_, lv_color_hex(C_FG), 0);
-    lv_label_set_text(ds_label_, "DS …");
+    lv_label_set_text(ds_label_, "");
     lv_obj_align(ds_label_, LV_ALIGN_TOP_MID, 53, 146);
+    lv_obj_add_flag(ds_label_, LV_OBJ_FLAG_HIDDEN);
 
-    // ---- GLM 下方:OrangePi 状态(与 GLM 同节奏 5 分钟;hermes /system/status) ----
-    opi_label_ = lv_label_create(root_);
-    lv_obj_set_style_text_font(opi_label_, &font_home_cn_16, 0);
-    lv_obj_set_style_text_color(opi_label_, lv_color_hex(C_FG), 0);
-    lv_label_set_text(opi_label_, "OPi …");
-    lv_obj_align(opi_label_, LV_ALIGN_TOP_LEFT, 8, 166);
+    // ---- GLM 下方:新股申购(与 GLM 同节奏 5 分钟;hermes /stocks/ipo) ----
+    ipo_label_ = lv_label_create(root_);
+    lv_obj_set_style_text_font(ipo_label_, &font_home_cn_16, 0);
+    lv_obj_set_style_text_color(ipo_label_, lv_color_hex(C_FG), 0);
+    lv_label_set_text(ipo_label_, "OPi …");
+    lv_obj_align(ipo_label_, LV_ALIGN_TOP_LEFT, 8, 166);
 
     // ---- GLM 下方:最近的提醒/行程(hermes /agenda) ----
     // 动态中文文本:全量中文字体(1bpp 16px GB2312 子集不会缺字)
@@ -384,6 +386,7 @@ void HomeScreen::SwitchApp(int idx) {
             case 11: alive = ToolsApp::Get().Active(); break;
             case 12: alive = OpiApp::Get().Active(); break;
             case 13: alive = HealthApp::Get().Active(); break;
+            case 14: alive = LotteryApp::Get().Active(); break;
             default: break;
         }
         if (alive) return;   // 确实还在运行,跳过
@@ -406,6 +409,7 @@ void HomeScreen::SwitchApp(int idx) {
                 case 11: ToolsApp::Get().Destroy(); break;
                 case 12: OpiApp::Get().Destroy(); break;
             case 13: HealthApp::Get().Destroy(); break;
+            case 14: LotteryApp::Get().Destroy(); break;
                 default: break;
             }
             lvgl_port_unlock();
@@ -453,6 +457,9 @@ void HomeScreen::SwitchApp(int idx) {
     } else if (idx == 13) {
         HealthApp::Get().Create(parent);
         HealthApp::Get().Enter();
+    } else if (idx == 14) {
+        LotteryApp::Get().Create(parent);
+        LotteryApp::Get().Enter();
     } else {
         RadioApp::Get().Create(parent);
         RadioApp::Get().Enter();
@@ -480,10 +487,12 @@ bool HomeScreen::ExitCurrentApp() {
             case 11: ToolsApp::Get().Destroy(); break;
             case 12: OpiApp::Get().Destroy(); break;
             case 13: HealthApp::Get().Destroy(); break;
+            case 14: LotteryApp::Get().Destroy(); break;
             default: break;
         }
         lvgl_port_unlock();
     }
+    last_exited_app_ = idx;
     current_app_ = -1;
     return true;
 }
@@ -534,7 +543,7 @@ void HomeScreen::RebuildTheme() {
         for (int i = 0; i < kLauncherCount; i++) launcher_items_[i] = nullptr;
         battery_text_ = nullptr; battery_frame_ = nullptr; battery_fill_ = nullptr;
         weather_line1_ = nullptr; glm_label_ = nullptr; ds_label_ = nullptr;
-        opi_label_ = nullptr; agenda_label_ = nullptr;
+        ipo_label_ = nullptr; agenda_label_ = nullptr;
         avatar_img_ = nullptr;
         visible_ = false;
         current_app_ = -1;
@@ -606,33 +615,36 @@ void HomeScreen::RefreshClock() {
         lv_label_set_text(weather_line1_, "天气获取中…");
     }
 
-    // GLM 用量(5h 窗口剩余)
-    int glm_remaining = GlmService::Get().RemainingPct();
-    if (glm_remaining >= 0) {
-        snprintf(buf, sizeof(buf), "智谱 GLM %d%%", glm_remaining);
-        lv_label_set_text(glm_label_, buf);
-    } else {
-        lv_label_set_text(glm_label_, "智谱 GLM …");
-    }
-
-    // DeepSeek 余额(GLM 右侧;无数据保持占位)
-    int ds_cents = DeepseekService::Get().BalanceCents();
-    if (ds_cents >= 0) {
-        snprintf(buf, sizeof(buf), "DS %d.%02d元", ds_cents / 100, ds_cents % 100);
-        lv_label_set_text(ds_label_, buf);
-    } else {
-        lv_label_set_text(ds_label_, "DS …");
-    }
-
-    // OrangePi 状态(GLM 下方;poller 与 GLM 同节奏拉取,无数据保持占位)
+    // GLM 用量: "GLM 5H 77%  7D 55% RT 01:41"(去掉 DS)
     {
-        const OpiService::Data& od = OpiService::Get().data();
-        if (od.valid) {
-            snprintf(buf, sizeof(buf), "Opi-CPU%.0f%% 内存%.0f%% 温度%.0f°",
-                     od.cpu_percent, od.mem_percent, od.cpu_temp_c);
-            lv_label_set_text(opi_label_, buf);
+        int p5 = GlmService::Get().RemainingPct();
+        int p7 = GlmService::Get().Pct7d();
+        char rt[8];
+        GlmService::FormatReset(rt, sizeof(rt));
+        ESP_LOGI("glmui", "RT: p5=%d p7=%d rt='%s' reset=%lld", p5, p7, rt,
+                 (long long)GlmService::Get().ResetMs());
+        if (p5 >= 0) {
+            if (p7 >= 0 && rt[0] != '\0') {
+                snprintf(buf, sizeof(buf), "GLM 5H %d%%  7D %d%% RT %s", p5, p7, rt);
+            } else if (p7 >= 0) {
+                snprintf(buf, sizeof(buf), "GLM 5H %d%%  7D %d%%", p5, p7);
+            } else {
+                snprintf(buf, sizeof(buf), "GLM %d%%", p5);
+            }
+            lv_label_set_text(glm_label_, buf);
         } else {
-            lv_label_set_text(opi_label_, "Opi …");
+            lv_label_set_text(glm_label_, "GLM …");
+        }
+    }
+
+    // 新股申购(GLM 下方;无数据隐藏)
+    {
+        const char* ipo = IpoService::Get().Text();
+        if (ipo != nullptr && ipo[0] != '\0') {
+            lv_label_set_text(ipo_label_, ipo);
+            lv_obj_clear_flag(ipo_label_, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(ipo_label_, LV_OBJ_FLAG_HIDDEN);
         }
     }
 

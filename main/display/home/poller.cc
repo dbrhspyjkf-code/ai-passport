@@ -24,7 +24,9 @@
 #include "mail_status.h"
 #include "news_service.h"
 #include "opi_service.h"
+#include "ipo_service.h"
 #include "health_service.h"
+#include "lottery_service.h"
 #include "weather_service.h"
 
 static const char* TAG = "poller";
@@ -178,29 +180,46 @@ void Poller::Loop() {
         const bool force_mail = MailStatus::Get().ConsumeForce();
         ESP_LOGI(TAG, "round start (t=%us, refresh=%d)", (unsigned)(esp_timer_get_time() / 1000000ULL),
                  (int)refresh_now_.load());
+        // 2026-11-02: 各服务间加 200ms 间隔 + 低内存防护栏
+        // 实锤: 连续 HTTP 挤压堆 → LVGL 画字形临时缓冲分配失败 → bad_alloc abort
+        auto heap_guard = []() -> bool {
+            return heap_caps_get_free_size(MALLOC_CAP_DEFAULT) > 12288;   // <12KB 跳过
+        };
         // agenda + 金融:每轮(5 分钟)都刷新
         Beat();
         bool agenda_ok = AgendaService::Get().Poll();   // 内含金融三 tab
         last_round = now;
+        vTaskDelay(pdMS_TO_TICKS(200));   // 让堆呼吸
 
         bool weather_ok = true, glm_ok = true, ds_ok = true;
         bool due = first_round || (now - last_weather >= (uint32_t)s_weather_interval);
-        if (due) {
+        if (due && heap_guard()) {
             Beat();
             weather_ok = WeatherService::Get().Poll();
             last_weather = weather_ok ? now_min() : last_weather;
+            vTaskDelay(pdMS_TO_TICKS(200));
         }
         due = first_round || (now - last_glm >= (uint32_t)s_glm_interval);
-        if (due) {
+        if (due && heap_guard()) {
             Beat();
             glm_ok = GlmService::Get().Poll();
             last_glm = glm_ok ? now_min() : last_glm;
+            vTaskDelay(pdMS_TO_TICKS(200));
             // DeepSeek 余额:与 GLM 同节奏(同服务器,5 分钟)
             Beat();
             ds_ok = DeepseekService::Get().Poll();
-            // OrangePi 状态:主页状态行与 GLM 同节奏
-            Beat();
-            OpiService::Get().Poll();
+            vTaskDelay(pdMS_TO_TICKS(200));
+            // OrangePi 状态 + 新股申购:主页行与 GLM 同节奏
+            if (heap_guard()) {
+                Beat();
+                OpiService::Get().Poll();
+                vTaskDelay(pdMS_TO_TICKS(200));
+            }
+            if (heap_guard()) {
+                Beat();
+                IpoService::Get().Poll();
+                vTaskDelay(pdMS_TO_TICKS(200));
+            }
         }
         // 邮件未读:独立 2 分钟节奏(独立服务 8768);手动刷新时立即执行
         if (force_mail || now - s_last_mail >= 2) {
@@ -263,6 +282,10 @@ void Poller::Loop() {
             Beat();
             HealthService::Get().Poll();
         }
+        if (LotteryService::Get().ConsumeForce()) {
+            Beat();
+            LotteryService::Get().Poll();
+        }
         first_round = false;
         last_weather = last_weather;  // no-op,保持变量活跃
 
@@ -275,7 +298,8 @@ void Poller::Loop() {
             if (MailStatus::Get().ForcePending()) break;   // 邮件手动刷新快速响应
             if (NewsService::Get().ForcePending()) break;  // 新闻手动刷新快速响应
             if (OpiService::Get().ForcePending()) break;   // OrangePi 手动刷新快速响应
-            if (HealthService::Get().ForcePending()) break;   // 健康手动刷新快速响应
+            if (HealthService::Get().ForcePending()) break;
+            if (LotteryService::Get().ForcePending()) break;
             Beat();   // 空闲等待也算存活,否则 5 分钟间隔会被看门狗误判
             vTaskDelay(pdMS_TO_TICKS(500));
         }
@@ -293,7 +317,9 @@ void Poller::Start() {
     MailStatus::Get().Start(s_mail_url, s_mail_interval);
     NewsService::Get().Start(s_news_url, s_news_interval);
     OpiService::Get().Start(s_opi_url);
+    IpoService::Get().Start(s_opi_url);   // 同 hermes 基址
     HealthService::Get().Start(s_health_url);
+    LotteryService::Get().Start(s_health_url);   // 同 hermes 基址
     running_.store(true);
     // 5KB 栈:实测峰值 2.8KB(全数据源局域网纯 HTTP,cJSON 解析),
     // 栈小一号也更容易在内存碎片化后重建(见下方失败重启)。

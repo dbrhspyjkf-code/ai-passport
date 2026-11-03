@@ -292,11 +292,13 @@ void LvglDisplay::UpdateStatusBar(bool update_all) {
             if (home_screen_ == nullptr) {
                 // 开机内存低谷(MQTT/OTA/音频引擎初始化叠加,慢开机时更深)里建主页
                 // 会撞上 LVGL 样式分配失败→断言(2026-10-25 HomeScreen::Create:313
-                // 实锤)。free<16K 或 largest<4K 时推后一个 tick(1s),最多等 10s。
+                // 实锤)。free<20K 或 largest<6K 时推后一个 tick(1s),最多等 30s。
+                // 2026-11-02 加大:MQTT/TLS 握手(~47KB)+音频+主页同时竞争,
+                // minimal 实测低至 1KB → bad_alloc abort(开机 t≈4.5s 崩溃主因)。
                 static int s_home_defer = 0;
                 uint32_t free_now = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
                 uint32_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT);
-                if ((free_now < 16384 || largest < 4096) && s_home_defer < 10) {
+                if ((free_now < 20480 || largest < 6144) && s_home_defer < 30) {
                     s_home_defer++;
                     ESP_LOGW(TAG, "defer home screen (%d): free=%u largest=%u",
                              s_home_defer, (unsigned)free_now, (unsigned)largest);

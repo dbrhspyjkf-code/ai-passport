@@ -70,8 +70,8 @@ void HealthApp::Create(lv_obj_t* parent) {
             lv_obj_set_size(card, kCardW, kCardH);
             lv_obj_set_style_bg_color(card, lv_color_hex(theme::hint()), 0);
             lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
-            lv_obj_set_style_border_color(card,
-                lv_color_hex(kCardColors[idx % HealthService::kMetricCount]), 0);
+            // 边框统一用主题 dim 色(替代 iOS 彩虹色,与整体主题协调)
+            lv_obj_set_style_border_color(card, lv_color_hex(theme::dim()), 0);
             lv_obj_set_style_border_width(card, 1, 0);
             lv_obj_set_style_border_opa(card, LV_OPA_60, 0);
             lv_obj_set_style_radius(card, 4, 0);
@@ -83,7 +83,7 @@ void HealthApp::Create(lv_obj_t* parent) {
 
             name_lbl_[r][c] = lv_label_create(card);
             lv_obj_set_style_text_font(name_lbl_[r][c], &font_home_cn_16, 0);
-            lv_obj_set_style_text_color(name_lbl_[r][c], lv_color_hex(C_DIM), 0);
+            lv_obj_set_style_text_color(name_lbl_[r][c], lv_color_hex(theme::fg()), 0);
             lv_label_set_text(name_lbl_[r][c], "");
             lv_obj_align(name_lbl_[r][c], LV_ALIGN_TOP_LEFT, 2, 0);
 

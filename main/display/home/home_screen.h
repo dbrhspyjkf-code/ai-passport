@@ -64,6 +64,8 @@ public:
     bool HandleLauncherKey(int key);
     void SwitchApp(int idx);   // 切换 APP(销毁上一个)
     bool ExitCurrentApp();     // 退出即销毁当前 APP(释放常驻内存),无 APP 则 false
+    int current_app_index() const { return current_app_; }
+    int last_exited_app() const { return last_exited_app_; }   // 当前 APP 索引(-1=无)
     void RebuildTheme();       // 主题切换后重建主页(删 root 重新 Create)
     void LauncherHighlight();
     int launcher_selected() const { return launcher_sel_; }
@@ -73,6 +75,7 @@ private:
     lv_obj_t* avatar_img_ = nullptr;   // 头像图片(眨眼切换源)
     bool blink_closed_ = false;
     int current_app_ = -1;   // 当前 APP 索引(-1=无);进新 APP 销毁旧的
+    int last_exited_app_ = -1;   // 退出时记录(board 判断返回哪个文件夹)
     const lv_font_t* home_font_ = nullptr;   // 懒创建 APP 时传给 FinanceApp
     HomeScreen() = default;
 
@@ -92,7 +95,7 @@ private:
     lv_obj_t* weather_line1_ = nullptr;   // 温度 + 天气 + 湿度
     lv_obj_t* glm_label_ = nullptr;       // GLM 5h 窗口剩余百分比
     lv_obj_t* ds_label_ = nullptr;        // DeepSeek 余额(GLM 右侧,"DS 49.93元")
-    lv_obj_t* opi_label_ = nullptr;       // OrangePi 状态(GLM 下方,"CPU12% 内存69% 温度46°")
+    lv_obj_t* ipo_label_ = nullptr;       // 新股申购(GLM 下方)
     lv_obj_t* agenda_label_ = nullptr;    // 最近的提醒/行程文本
     bool visible_ = false;
 };

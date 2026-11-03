@@ -21,6 +21,7 @@
 #include "display/home/tools_app.h"
 #include "display/home/opi_app.h"
 #include "display/home/health_app.h"
+#include "display/home/lottery_app.h"
 #include "display/home/theme.h"
 #include "display/idle_dim.h"
 #include "esp_lvgl_port.h"
@@ -237,7 +238,15 @@ private:
                 auto& opiU = OpiApp::Get();
                 if (opiU.Active()) return;   // OrangePi:UP/DOWN 无功能,消费
                 auto& healthU = HealthApp::Get();
-                if (healthU.Active()) return;   // 健康:UP/DOWN 无功能,消费
+                if (healthU.Active()) return;
+                auto& lotteryU = LotteryApp::Get();
+                if (lotteryU.Active()) {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        lotteryU.HandleKey(0);   // 上一页
+                        lvgl_port_unlock();
+                    }
+                    return;
+                }   // 健康:UP/DOWN 无功能,消费
                 auto& timerU = TimerApp::Get();
                 if (timerU.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
@@ -283,7 +292,16 @@ private:
                     return;
                 }
                 // APP=退出即销毁(释放常驻内存);无 APP=一键换主题
-                if (HomeScreen::Get().ExitCurrentApp()) return;
+                if (HomeScreen::Get().ExitCurrentApp()) {
+                    // 工具子APP(新闻9/OrangePi12/健康13/双色球14)退出→回工具文件夹
+                    // 娱乐子APP(方块6/Flappy7/收音机8)退出→回娱乐文件夹
+                    int prev = HomeScreen::Get().last_exited_app();
+                    if (prev == 9 || prev == 12 || prev == 13 || prev == 14)
+                        HomeScreen::Get().SwitchApp(11);
+                    else if (prev >= 6 && prev <= 8)
+                        HomeScreen::Get().SwitchApp(5);
+                    return;
+                }
                 {
                     const char* tn = theme::cycle();
                     HomeScreen::Get().RebuildTheme();
@@ -373,7 +391,15 @@ private:
                 auto& opiD = OpiApp::Get();
                 if (opiD.Active()) return;   // OrangePi:UP/DOWN 无功能,消费
                 auto& healthD = HealthApp::Get();
-                if (healthD.Active()) return;   // 健康:UP/DOWN 无功能,消费
+                if (healthD.Active()) return;
+                auto& lotteryD = LotteryApp::Get();
+                if (lotteryD.Active()) {
+                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
+                        lotteryD.HandleKey(1);   // 下一页
+                        lvgl_port_unlock();
+                    }
+                    return;
+                }   // 健康:UP/DOWN 无功能,消费
                 auto& timerD = TimerApp::Get();
                 if (timerD.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
@@ -606,7 +632,16 @@ private:
             Application::GetInstance().Schedule([this, &finance]() {
                 extern int64_t g_ok_longpress_us;
                 g_ok_longpress_us = esp_timer_get_time();
-                if (HomeScreen::Get().ExitCurrentApp()) return;
+                if (HomeScreen::Get().ExitCurrentApp()) {
+                    // 工具子APP(新闻9/OrangePi12/健康13/双色球14)退出→回工具文件夹
+                    // 娱乐子APP(方块6/Flappy7/收音机8)退出→回娱乐文件夹
+                    int prev = HomeScreen::Get().last_exited_app();
+                    if (prev == 9 || prev == 12 || prev == 13 || prev == 14)
+                        HomeScreen::Get().SwitchApp(11);
+                    else if (prev >= 6 && prev <= 8)
+                        HomeScreen::Get().SwitchApp(5);
+                    return;
+                }
                 if (Application::GetInstance().GetDeviceState() == kDeviceStateIdle) {
                     ToggleChat();
                 }

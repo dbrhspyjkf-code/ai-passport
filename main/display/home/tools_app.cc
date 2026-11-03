@@ -38,14 +38,14 @@ void ToolsApp::Create(lv_obj_t* parent) {
     lv_obj_set_style_text_font(title, &font_home_cn_16, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(C_FG), 0);
     lv_label_set_text(title, "工具");
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 24);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 14);
 
     // 三个条目行(图标左,名称+说明右)
-    static const char* kNames[kToolCount] = {"AI 新闻", "ORANGEPI", "健康"};
-    static const char* kSubs[kToolCount] = {"每天中午更新", "系统状态监控", "iPhone 健康数据"};
+    static const char* kNames[kToolCount] = {"AI 新闻", "ORANGEPI", "健康", "双色球"};
+    static const char* kSubs[kToolCount] = {"每天中午更新", "系统状态监控", "iPhone 健康数据", "近 16 期开奖"};
     for (int i = 0; i < kToolCount; i++) {
         lv_obj_t* row = lv_obj_create(root_);
-        lv_obj_set_size(row, 208, 60);
+        lv_obj_set_size(row, 208, 52);
         lv_obj_set_style_bg_color(row, lv_color_hex(0x081120), 0);
         lv_obj_set_style_border_color(row, lv_color_hex(C_DIM), 0);
         lv_obj_set_style_border_width(row, 1, 0);
@@ -53,7 +53,7 @@ void ToolsApp::Create(lv_obj_t* parent) {
         lv_obj_set_style_pad_all(row, 0, 0);
         lv_obj_set_scrollbar_mode(row, LV_SCROLLBAR_MODE_OFF);
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_align(row, LV_ALIGN_TOP_MID, 0, 60 + i * 80);
+        lv_obj_align(row, LV_ALIGN_TOP_MID, 0, 40 + i * 64);
         rows_[i] = row;
 
         lv_obj_t* name = lv_label_create(row);
@@ -129,12 +129,34 @@ void ToolsApp::Create(lv_obj_t* parent) {
         mk(rows_[2], 26, 14, 0xFF3B30, 19, 28);    // 下部方块
     }
 
+    // 行图标 3:双色球(红圆+蓝圆重叠,彩票风)
+    {
+        auto mk = [](lv_obj_t* parent, int w, int h, uint32_t color, int x, int y, int r) {
+            lv_obj_t* o = lv_obj_create(parent);
+            lv_obj_set_size(o, w, h);
+            lv_obj_set_style_bg_color(o, lv_color_hex(color), 0);
+            lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_width(o, 0, 0);
+            lv_obj_set_style_radius(o, r, 0);
+            lv_obj_set_style_pad_all(o, 0, 0);
+            lv_obj_set_scrollbar_mode(o, LV_SCROLLBAR_MODE_OFF);
+            lv_obj_clear_flag(o, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_set_pos(o, x, y);
+        };
+        // 红球(大,左)
+        mk(rows_[3], 22, 22, 0xFF5050, 18, 18, 11);
+        // 蓝球(小,右下,部分重叠)
+        mk(rows_[3], 16, 16, 0x4488FF, 32, 26, 8);
+        // 蓝球上的白点装饰
+        mk(rows_[3], 4, 4, 0xE8E3D3, 38, 32, 2);
+    }
+
     // 底部按键提示
     lv_obj_t* hint = lv_label_create(root_);
     lv_obj_set_style_text_font(hint, &font_home_cn_16, 0);
     lv_obj_set_style_text_color(hint, lv_color_hex(C_DIM), 0);
     lv_label_set_text(hint, "OK 进入 · 长按返回");
-    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -14);
+    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -6);
 
     lv_obj_add_flag(root_, LV_OBJ_FLAG_HIDDEN);
 }
@@ -160,9 +182,11 @@ void ToolsApp::HandleKey(int key) {
             sel_ = (sel_ + 1) % kToolCount;
             Highlight();
             break;
-        case 2:   // OK:进入选中工具(SwitchApp 会销毁本文件夹)
-            HomeScreen::Get().SwitchApp(sel_ == 0 ? 9 : sel_ == 1 ? 12 : 13);   // 9=新闻 12=OrangePi 13=健康
+        case 2: { // OK:进入选中工具(SwitchApp 会销毁本文件夹)
+            int idx = sel_ == 0 ? 9 : sel_ == 1 ? 12 : sel_ == 2 ? 13 : 14;
+            HomeScreen::Get().SwitchApp(idx);
             break;
+        }
         default:
             break;
     }
