@@ -17,7 +17,6 @@
 #include "display/home/player_app.h"
 #include "display/home/timer_app.h"
 #include "display/home/mail_app.h"
-#include "display/home/news_app.h"
 #include "display/home/tools_app.h"
 #include "display/home/opi_app.h"
 #include "display/home/health_app.h"
@@ -219,14 +218,6 @@ private:
                     }
                     return;
                 }
-                auto& newsU = NewsApp::Get();
-                if (newsU.Active()) {
-                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        newsU.HandleKey(0);   // 上一日条
-                        lvgl_port_unlock();
-                    }
-                    return;
-                }
                 auto& toolsU = ToolsApp::Get();
                 if (toolsU.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
@@ -296,7 +287,7 @@ private:
                     // 工具子APP(新闻9/OrangePi12/健康13/双色球14)退出→回工具文件夹
                     // 娱乐子APP(方块6/Flappy7/收音机8)退出→回娱乐文件夹
                     int prev = HomeScreen::Get().last_exited_app();
-                    if (prev == 9 || prev == 12 || prev == 13 || prev == 14)
+                    if (prev == 12 || prev == 13 || prev == 14)
                         HomeScreen::Get().SwitchApp(11);
                     else if (prev >= 6 && prev <= 8)
                         HomeScreen::Get().SwitchApp(5);
@@ -368,14 +359,6 @@ private:
                 if (mailD.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
                         mailD.HandleKey(1);   // 下一封
-                        lvgl_port_unlock();
-                    }
-                    return;
-                }
-                auto& newsD = NewsApp::Get();
-                if (newsD.Active()) {
-                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        newsD.HandleKey(1);   // 下一条
                         lvgl_port_unlock();
                     }
                     return;
@@ -546,14 +529,6 @@ private:
                     }
                     return;
                 }
-                auto& newsOK = NewsApp::Get();
-                if (newsOK.Active()) {
-                    if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
-                        newsOK.HandleKey(2);   // 刷新
-                        lvgl_port_unlock();
-                    }
-                    return;
-                }
                 auto& toolsOK = ToolsApp::Get();
                 if (toolsOK.Active()) {
                     if (lvgl_port_lock(pdMS_TO_TICKS(500))) {
@@ -636,7 +611,7 @@ private:
                     // 工具子APP(新闻9/OrangePi12/健康13/双色球14)退出→回工具文件夹
                     // 娱乐子APP(方块6/Flappy7/收音机8)退出→回娱乐文件夹
                     int prev = HomeScreen::Get().last_exited_app();
-                    if (prev == 9 || prev == 12 || prev == 13 || prev == 14)
+                    if (prev == 12 || prev == 13 || prev == 14)
                         HomeScreen::Get().SwitchApp(11);
                     else if (prev >= 6 && prev <= 8)
                         HomeScreen::Get().SwitchApp(5);

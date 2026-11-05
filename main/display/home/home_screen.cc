@@ -24,7 +24,6 @@
 #include "lunar_calendar.h"
 #include "weather_service.h"
 #include "mail_app.h"
-#include "news_app.h"
 #include "tools_app.h"
 #include "opi_app.h"
 #include "health_app.h"
@@ -382,7 +381,6 @@ void HomeScreen::SwitchApp(int idx) {
             case 7: alive = FlappyApp::Get().Active(); break;
             case 8: alive = RadioApp::Get().Active(); break;
             case 10: alive = MediaApp::Get().Active(); break;
-            case 9: alive = NewsApp::Get().Active(); break;
             case 11: alive = ToolsApp::Get().Active(); break;
             case 12: alive = OpiApp::Get().Active(); break;
             case 13: alive = HealthApp::Get().Active(); break;
@@ -404,7 +402,6 @@ void HomeScreen::SwitchApp(int idx) {
                 case 6: TetrisApp::Get().Destroy(); break;
                 case 7: FlappyApp::Get().Destroy(); break;
                 case 8: RadioApp::Get().Destroy(); break;
-                case 9: NewsApp::Get().Destroy(); break;
                 case 10: MediaApp::Get().Destroy(); break;
                 case 11: ToolsApp::Get().Destroy(); break;
                 case 12: OpiApp::Get().Destroy(); break;
@@ -442,9 +439,6 @@ void HomeScreen::SwitchApp(int idx) {
     } else if (idx == 7) {
         FlappyApp::Get().Create(parent);
         FlappyApp::Get().Enter();
-    } else if (idx == 9) {
-        NewsApp::Get().Create(parent);
-        NewsApp::Get().Enter();
     } else if (idx == 10) {
         MediaApp::Get().Create(parent);
         MediaApp::Get().Enter();
@@ -482,7 +476,6 @@ bool HomeScreen::ExitCurrentApp() {
             case 6: TetrisApp::Get().Destroy(); break;
             case 7: FlappyApp::Get().Destroy(); break;
             case 8: RadioApp::Get().Destroy(); break;
-            case 9: NewsApp::Get().Destroy(); break;
             case 10: MediaApp::Get().Destroy(); break;
             case 11: ToolsApp::Get().Destroy(); break;
             case 12: OpiApp::Get().Destroy(); break;

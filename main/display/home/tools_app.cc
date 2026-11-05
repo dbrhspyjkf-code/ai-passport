@@ -41,8 +41,8 @@ void ToolsApp::Create(lv_obj_t* parent) {
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 14);
 
     // 三个条目行(图标左,名称+说明右)
-    static const char* kNames[kToolCount] = {"AI 新闻", "ORANGEPI", "健康", "双色球"};
-    static const char* kSubs[kToolCount] = {"每天中午更新", "系统状态监控", "iPhone 健康数据", "近 16 期开奖"};
+    static const char* kNames[kToolCount] = {"ORANGEPI", "健康", "双色球"};
+    static const char* kSubs[kToolCount] = {"系统状态监控", "iPhone 健康数据", "近 16 期开奖"};
     for (int i = 0; i < kToolCount; i++) {
         lv_obj_t* row = lv_obj_create(root_);
         lv_obj_set_size(row, 208, 52);
@@ -69,15 +69,8 @@ void ToolsApp::Create(lv_obj_t* parent) {
         lv_obj_align(sub, LV_ALIGN_TOP_LEFT, 64, 33);
     }
 
-    // 行图标 0:新闻"闻"字(青)
-    lv_obj_t* news_icon = lv_label_create(rows_[0]);
-    lv_obj_set_style_text_font(news_icon, &font_home_cn_16, 0);
-    lv_obj_set_style_text_color(news_icon, lv_color_hex(0x8ae0f7), 0);
-    lv_label_set_text(news_icon, "闻");
-    lv_obj_align(news_icon, LV_ALIGN_TOP_LEFT, 20, 12);
-
     // 行图标 1:OrangePi 板载芯片(橙方块+引脚)
-    lv_obj_t* chip = lv_obj_create(rows_[1]);
+    lv_obj_t* chip = lv_obj_create(rows_[0]);
     lv_obj_set_size(chip, 28, 22);
     lv_obj_set_style_bg_color(chip, lv_color_hex(0xf5a263), 0);
     lv_obj_set_style_bg_opa(chip, LV_OPA_COVER, 0);
@@ -88,7 +81,7 @@ void ToolsApp::Create(lv_obj_t* parent) {
     lv_obj_clear_flag(chip, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_pos(chip, 16, 20);
     for (int p = 0; p < 4; p++) {
-        lv_obj_t* pin = lv_obj_create(rows_[1]);
+        lv_obj_t* pin = lv_obj_create(rows_[0]);
         lv_obj_set_size(pin, 2, 6);
         lv_obj_set_style_bg_color(pin, lv_color_hex(0xb06a3a), 0);
         lv_obj_set_style_bg_opa(pin, LV_OPA_COVER, 0);
@@ -98,7 +91,7 @@ void ToolsApp::Create(lv_obj_t* parent) {
         lv_obj_set_scrollbar_mode(pin, LV_SCROLLBAR_MODE_OFF);
         lv_obj_clear_flag(pin, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_pos(pin, 19 + p * 7, 14);
-        lv_obj_t* pin2 = lv_obj_create(rows_[1]);
+        lv_obj_t* pin2 = lv_obj_create(rows_[0]);
         lv_obj_set_size(pin2, 2, 6);
         lv_obj_set_style_bg_color(pin2, lv_color_hex(0xb06a3a), 0);
         lv_obj_set_style_bg_opa(pin2, LV_OPA_COVER, 0);
@@ -183,7 +176,7 @@ void ToolsApp::HandleKey(int key) {
             Highlight();
             break;
         case 2: { // OK:进入选中工具(SwitchApp 会销毁本文件夹)
-            int idx = sel_ == 0 ? 9 : sel_ == 1 ? 12 : sel_ == 2 ? 13 : 14;
+            int idx = sel_ == 0 ? 12 : sel_ == 1 ? 13 : 14;
             HomeScreen::Get().SwitchApp(idx);
             break;
         }
